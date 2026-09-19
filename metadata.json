@@ -1,0 +1,10 @@
+{
+  "name": "BRICS CivicVoice AI",
+  "description": "An AI-native civic intelligence platform that transforms natural citizen reports into structured, prioritized, and actionable civic cases.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_BEDROCK_API"
+  ]
+}

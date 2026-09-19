@@ -1,0 +1,498 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: CivicVoice AI - AWS Ship It MVP
+
+Parameters:
+  BedrockModelId:
+    Type: String
+    Default: global.anthropic.claude-sonnet-4-5-20250929-v1:0
+
+  # Optional officer notification email.
+  # When empty, no SNS email subscription is created.
+  AlertEmail:
+    Type: String
+    Default: ''
+
+Conditions:
+  # Create the SNS email subscription only when an email is supplied.
+  CreateAlertSubscription: !Not
+    - !Equals
+      - !Ref AlertEmail
+      - ''
+
+Resources:
+
+  # ============================================================
+  # DYNAMODB - MAIN CASES
+  # ============================================================
+
+  CasesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: CivicVoiceCases
+      BillingMode: PAY_PER_REQUEST
+
+      AttributeDefinitions:
+        - AttributeName: case_id
+          AttributeType: S
+
+      KeySchema:
+        - AttributeName: case_id
+          KeyType: HASH
+
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+
+  # ============================================================
+  # DYNAMODB - APPEND-ONLY AUDIT HISTORY
+  # ============================================================
+
+  CaseHistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: CivicVoiceCaseHistory
+      BillingMode: PAY_PER_REQUEST
+
+      AttributeDefinitions:
+        - AttributeName: case_id
+          AttributeType: S
+
+        - AttributeName: timestamp_event_id
+          AttributeType: S
+
+      KeySchema:
+        - AttributeName: case_id
+          KeyType: HASH
+
+        - AttributeName: timestamp_event_id
+          KeyType: RANGE
+
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+
+  # ============================================================
+  # S3 - PRIVATE CIVIC EVIDENCE
+  # ============================================================
+
+  EvidenceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+      VersioningConfiguration:
+        Status: Enabled
+
+
+  # ============================================================
+  # EVENTBRIDGE - CIVICVOICE EVENT BUS
+  # ============================================================
+
+  CivicVoiceEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: CivicVoiceEventBus
+
+
+  # ============================================================
+  # SNS - OFFICER ALERT TOPIC
+  # ============================================================
+
+  CivicVoiceSnsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: CivicVoiceCriticalAlerts
+
+
+  # ============================================================
+  # SNS TOPIC POLICY
+  #
+  # IMPORTANT:
+  # This is a separate AWS::SNS::TopicPolicy resource.
+  # Keeping the policy separate avoids the CloudFormation
+  # circular dependency between SNS and EventBridge.
+  # ============================================================
+
+  CivicVoiceSnsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+
+      Topics:
+        - !Ref CivicVoiceSnsTopic
+
+      PolicyDocument:
+        Version: '2012-10-17'
+
+        Statement:
+          - Sid: EventBridgePublishCriticalAlerts
+
+            Effect: Allow
+
+            Principal:
+              Service:
+                - events.amazonaws.com
+
+            Action:
+              - sns:Publish
+
+            Resource: !Ref CivicVoiceSnsTopic
+
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+
+  # ============================================================
+  # SNS EMAIL SUBSCRIPTION
+  # ============================================================
+
+  CivicVoiceAlertSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: CreateAlertSubscription
+
+    Properties:
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+      TopicArn: !Ref CivicVoiceSnsTopic
+
+
+  # ============================================================
+  # EVENTBRIDGE RULE
+  #
+  # HIGH + CRITICAL cases generate officer alerts.
+  # ============================================================
+
+  CivicVoiceCriticalCaseRule:
+    Type: AWS::Events::Rule
+
+    DependsOn:
+      - CivicVoiceSnsTopicPolicy
+
+    Properties:
+      Name: CivicVoiceCriticalCaseRule
+
+      EventBusName: !Ref CivicVoiceEventBus
+
+      State: ENABLED
+
+      EventPattern:
+
+        source:
+          - civicvoice
+
+        detail-type:
+          - CivicCaseCreated
+
+        detail:
+          priority:
+            - CRITICAL
+            - HIGH
+
+      Targets:
+        - Arn: !Ref CivicVoiceSnsTopic
+          Id: CivicVoiceCriticalSnsTarget
+
+
+  # ============================================================
+  # API LAMBDA
+  # ============================================================
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+
+    Metadata:
+      BuildMethod: esbuild
+
+      BuildProperties:
+        Minify: true
+        Target: es2022
+        Sourcemap: true
+        Format: cjs
+
+        External:
+          - vite
+          - esbuild
+
+    Properties:
+
+      Runtime: nodejs22.x
+
+      Handler: lambda.handler
+
+      CodeUri: .
+
+      MemorySize: 1024
+
+      Timeout: 60
+
+
+      # --------------------------------------------------------
+      # ENVIRONMENT VARIABLES
+      # --------------------------------------------------------
+
+      Environment:
+        Variables:
+
+          CASES_TABLE: !Ref CasesTable
+
+          CASE_HISTORY_TABLE: !Ref CaseHistoryTable
+
+          MEDIA_BUCKET: !Ref EvidenceBucket
+
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+
+          EVENT_BUS_NAME: !Ref CivicVoiceEventBus
+
+
+      # --------------------------------------------------------
+      # IAM PERMISSIONS
+      # --------------------------------------------------------
+
+      Policies:
+
+        # Main CivicVoice cases table.
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CasesTable
+
+
+        # Append-only audit history.
+        #
+        # Only PutItem and Query are granted.
+        # No UpdateItem or DeleteItem permission.
+        - Statement:
+            - Effect: Allow
+
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:Query
+
+              Resource: !GetAtt CaseHistoryTable.Arn
+
+
+        # Private evidence bucket.
+        - S3CrudPolicy:
+            BucketName: !Ref EvidenceBucket
+
+
+        # Amazon Bedrock.
+        - Statement:
+            - Effect: Allow
+
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+
+              Resource: '*'
+
+
+        # Amazon Transcribe.
+        - Statement:
+            - Effect: Allow
+
+              Action:
+                - transcribe:StartTranscriptionJob
+                - transcribe:GetTranscriptionJob
+
+              Resource: '*'
+
+
+        # EventBridge.
+        #
+        # Lambda can publish CivicCaseCreated events
+        # only to the CivicVoice event bus.
+        - Statement:
+            - Effect: Allow
+
+              Action:
+                - events:PutEvents
+
+              Resource: !GetAtt CivicVoiceEventBus.Arn
+
+
+        # CloudWatch custom metrics.
+        #
+        # PutMetricData does not support resource-level
+        # permissions, therefore Resource: '*'.
+        - Statement:
+            - Effect: Allow
+
+              Action:
+                - cloudwatch:PutMetricData
+
+              Resource: '*'
+
+
+    # ==========================================================
+    # API GATEWAY
+    # ==========================================================
+
+    Events:
+
+      Api:
+        Type: Api
+
+        Properties:
+          Path: /{proxy+}
+          Method: ANY
+
+
+  # ============================================================
+  # CLOUDWATCH - LAMBDA ERROR ALARM
+  # ============================================================
+
+  CivicVoiceLambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName: CivicVoiceLambdaErrorsAlarm
+
+      AlarmDescription: >
+        Alerts when the CivicVoice API Lambda reports
+        any error in a 5-minute window.
+
+      Namespace: AWS/Lambda
+
+      MetricName: Errors
+
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ApiFunction
+
+      Statistic: Sum
+
+      Period: 300
+
+      EvaluationPeriods: 1
+
+      Threshold: 1
+
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+
+      TreatMissingData: notBreaching
+
+
+  # ============================================================
+  # CLOUDWATCH - EVENTBRIDGE FAILURE ALARM
+  # ============================================================
+
+  CivicVoiceEventBridgePublishFailuresAlarm:
+    Type: AWS::CloudWatch::Alarm
+
+    Properties:
+
+      AlarmName: CivicVoiceEventBridgePublishFailuresAlarm
+
+      AlarmDescription: >
+        Alerts when CivicVoice fails to publish a
+        CivicCaseCreated event to EventBridge
+        in a 5-minute window.
+
+      Namespace: CivicVoice
+
+      MetricName: EventBridgePublishFailures
+
+      Statistic: Sum
+
+      Period: 300
+
+      EvaluationPeriods: 1
+
+      Threshold: 1
+
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+
+      TreatMissingData: notBreaching
+
+
+# ==============================================================
+# OUTPUTS
+# ==============================================================
+
+Outputs:
+
+  # ------------------------------------------------------------
+  # API URL
+  # ------------------------------------------------------------
+
+  ApiUrl:
+    Description: CivicVoice API Gateway URL
+
+    Value: !Sub
+      - https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/
+      - {}
+
+
+  # ------------------------------------------------------------
+  # S3
+  # ------------------------------------------------------------
+
+  EvidenceBucket:
+    Description: >
+      S3 bucket used for CivicVoice evidence
+
+    Value: !Ref EvidenceBucket
+
+
+  # ------------------------------------------------------------
+  # MAIN DYNAMODB TABLE
+  # ------------------------------------------------------------
+
+  CasesTable:
+    Description: >
+      DynamoDB table containing CivicVoice cases
+
+    Value: !Ref CasesTable
+
+
+  # ------------------------------------------------------------
+  # AUDIT HISTORY TABLE
+  # ------------------------------------------------------------
+
+  CaseHistoryTable:
+    Description: >
+      Append-only DynamoDB table containing
+      the CivicVoice case audit trail
+
+    Value: !Ref CaseHistoryTable
+
+
+  # ------------------------------------------------------------
+  # EVENTBRIDGE BUS
+  # ------------------------------------------------------------
+
+  CivicVoiceEventBus:
+    Description: >
+      CivicVoice custom EventBridge bus
+
+    Value: !Ref CivicVoiceEventBus
+
+
+  CivicVoiceEventBusArn:
+    Description: >
+      ARN of the CivicVoice EventBridge bus
+
+    Value: !GetAtt CivicVoiceEventBus.Arn
+
+
+  # ------------------------------------------------------------
+  # SNS
+  # ------------------------------------------------------------
+
+  CivicVoiceSnsTopic:
+    Description: >
+      SNS topic for critical CivicVoice officer alerts
+
+    Value: !Ref CivicVoiceSnsTopic

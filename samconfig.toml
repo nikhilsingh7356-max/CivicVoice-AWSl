@@ -1,0 +1,14 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "civicvoice-ship-it"
+resolve_s3 = true
+s3_prefix = "civicvoice-ship-it"
+region = "ap-south-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "BedrockModelId=\"global.anthropic.claude-sonnet-4-5-20250929-v1:0\" AlertEmail=\"nikhil.singh7356@gmail.com\""
+image_repositories = []
+
+[default.global.parameters]
+region = "ap-south-1"
