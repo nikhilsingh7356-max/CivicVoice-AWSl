@@ -17,7 +17,9 @@ import {
   parseCallbackParams,
   randomBase64Url,
   resolveCaseSource,
+  resolveCallbackUri,
   resolveProtectedAccess,
+  describeAuthorizeRequest,
   statesMatch,
   validateDemoCredentials,
 } from '../src/auth/logic.ts';

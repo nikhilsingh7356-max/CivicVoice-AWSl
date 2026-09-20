@@ -21,6 +21,7 @@ import {
   serializePkce,
   shouldRefresh,
   statesMatch,
+  resolveCallbackUri,
   TOKEN_PATH,
 } from './logic';
 
@@ -40,7 +41,11 @@ export interface FetchLike {
 }
 
 type WindowLike = {
-  location: { assign(url: string): void };
+  location: {
+    assign(url: string): void;
+    /** Present on real `window.location`; used by DEV-only redirect diagnostics. */
+    origin?: string;
+  };
   history?: unknown;
 };
 
@@ -106,6 +111,8 @@ export async function initiateSignIn(
     win: WindowLike;
     next?: string;
     fetcher?: FetchLike;
+    /** Optional receiver for the built authorize URL (for DEV-only diagnostics). */
+    onAuthorizeUrl?: (url: string) => void;
   }
 ): Promise<InitiateSignInResult> {
   const { storage, win, next } = input;
@@ -121,7 +128,15 @@ export async function initiateSignIn(
     const pkceRecord: StoredPkce = { state, verifier, createdAt: Date.now() };
     storage.setItem(PKCE_STORAGE_KEY, serializePkce(pkceRecord));
     if (isSafeInternalPath(next)) storage.setItem(NEXT_PATH_KEY, next);
-    const url = buildAuthorizeUrl(cfg, { mode, state, codeChallenge: challenge });
+    const url = buildAuthorizeUrl(cfg, {
+      mode,
+      state,
+      codeChallenge: challenge,
+      // Environment selector: explicit redirect (custom domain) or the running
+      // origin's /auth/callback (production vs localhost). Never a hardcoded mix.
+      redirectUri: resolveCallbackUri(cfg, win.location.origin),
+    });
+    input.onAuthorizeUrl?.(url);
     win.location.assign(url);
     return { dev: false };
   } catch (err) {
@@ -274,9 +289,9 @@ export async function completeSignIn(
   }
 
   // The redirect_uri used in the token exchange must EXACTLY match the one sent
-  // to /oauth2/authorize. Use the configured redirect URI (not a re-derived URL)
-  // so localhost and production remain consistent.
-  const redirectUri = cfg.redirectUri;
+  // to /oauth2/authorize. Resolve it the same way the authorize step did (an
+  // explicit configured redirect, otherwise the app origin's /auth/callback).
+  const redirectUri = resolveCallbackUri(cfg, input.origin);
   try {
     const tokens = await exchangeCodeForTokens(cfg, {
       code: params.code,
@@ -318,7 +333,7 @@ export async function completeSignIn(
  */
 export async function restoreSession(
   cfg: AuthConfig,
-  input: { storage: StorageLike; nowMs: number; fetcher?: FetchLike }
+  input: { storage: StorageLike; nowMs: number; origin?: string; fetcher?: FetchLike }
 ): Promise<RestoreResult> {
   const { storage, nowMs } = input;
 
@@ -341,7 +356,7 @@ export async function restoreSession(
       const fetcher: FetchLike = input.fetcher ?? ((...args) => fetch(...args));
       const refreshed = await refreshTokens(cfg, {
         refreshToken: session.refreshToken,
-        redirectUri: cfg.redirectUri,
+        redirectUri: resolveCallbackUri(cfg, input.origin ?? ''),
         fetcher,
       });
       if (refreshed) {

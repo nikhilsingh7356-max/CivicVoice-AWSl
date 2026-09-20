@@ -153,6 +153,43 @@ export function buildAuthorizeUrl(
   return `${base}${AUTHORIZE_PATH}?${encodeQuery(params)}`;
 }
 
+/**
+ * Resolve the OAuth callback URI used for the authorize request AND the token
+ * exchange (they must match exactly).
+ *
+ * Precedence:
+ * 1. An explicitly configured `VITE_COGNITO_REDIRECT_URI` (custom domains).
+ * 2. Otherwise derive `<origin>/auth/callback` from the running app's origin at
+ *    the moment of sign-in. This is the environment selector: a production
+ *    build resolves to the production Amplify callback, local development
+ *    resolves to the localhost callback — one can never leak into the other.
+ */
+export function resolveCallbackUri(cfg: Pick<AuthConfig, 'redirectUri'>, origin: string | undefined): string {
+  const trimmedOrigin = (origin ?? '').replace(/\/+$/, '');
+  if (cfg.redirectUri) return cfg.redirectUri;
+  return `${trimmedOrigin}/auth/callback`;
+}
+
+/**
+ * Redacted description of an authorize URL for development diagnostics.
+ * The `state` and `code_challenge` VALUES are never exposed (only their
+ * lengths) because `state` doubles as the PKCE verifier prefix and the
+ * challenge is derived from the verifier. No passwords, tokens, or codes are
+ * ever present in an authorize URL.
+ */
+export function describeAuthorizeRequest(url: string): string {
+  const [base, ...rest] = url.split('?');
+  const params = new URLSearchParams(rest.join('?'));
+  for (const sensitive of ['state', 'code_challenge'] as const) {
+    const value = params.get(sensitive);
+    if (value) params.set(sensitive, `<${value.length} chars>`);
+  }
+  const query = [...params.entries()]
+    .map(([name, value]) => `${name}=${value}`)
+    .join('&');
+  return query ? `${base}?${query}` : base;
+}
+
 /** Build the hosted UI logout URL (ends any Cognito cookies for this client). */
 export function buildLogoutUrl(cfg: AuthConfig, logoutUri: string): string {
   const params: Record<string, string> = {
@@ -339,6 +376,9 @@ export function validateAuthConfig(cfg: AuthConfig): string[] {
   if (!cfg.userPoolId || !/^[a-z0-9-]+_[A-Za-z0-9]+$/.test(cfg.userPoolId.trim())) {
     errors.push('VITE_COGNITO_USER_POOL_ID must match the region_userpoolid form.');
   }
+  // An explicit redirect is required in config: the deployment pins the exact
+  // callback here. `resolveCallbackUri` only derives a fallback at runtime for
+  // DEMO bootstrapping when this value is genuinely unset.
   if (!cfg.redirectUri || !/^https?:\/\/[^/]+(\/.*)?$/.test(cfg.redirectUri.trim())) {
     errors.push('VITE_COGNITO_REDIRECT_URI must be a valid http(s) URL.');
   } else {

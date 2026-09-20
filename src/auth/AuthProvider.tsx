@@ -10,7 +10,7 @@ import {
   writeDemoSession,
 } from './auth';
 import { AuthContext, AuthContextValue } from './useAuth';
-import { classifySignInFailure, deriveAuthMode, isSafeInternalPath, validateDemoCredentials } from './logic';
+import { classifySignInFailure, deriveAuthMode, describeAuthorizeRequest, isSafeInternalPath, validateDemoCredentials } from './logic';
 import { useToast } from '../components/ui/Toast';
 
 function isCallbackRoute(pathname: string): boolean {
@@ -20,6 +20,17 @@ function isCallbackRoute(pathname: string): boolean {
 function buildEntryUrl(mode: 'login' | 'signup', next?: string): string {
   const path = mode === 'signup' ? '/signup' : '/login';
   return isSafeInternalPath(next) ? `${path}?next=${encodeURIComponent(next)}` : path;
+}
+
+/**
+ * Development-only structural log of the Cognito authorize request.
+ * Secret-safe by construction (describeAuthorizeRequest) — it shows parameter
+ * names and non-secret values, and the lengths of `state`/`code_challenge`
+ * instead of their values. Never logged in production builds.
+ */
+function logAuthorizeUrl(url: string): void {
+  if (!import.meta.env.DEV) return;
+  console.info('[civicvoice:auth] Cognito authorize request:', describeAuthorizeRequest(url));
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -75,6 +86,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const restored = await restoreSession(authConfig, {
           storage: window.sessionStorage,
           nowMs: Date.now(),
+          origin: window.location.origin,
         });
         if (restored.kind === 'session') {
           setSession(restored.session);
@@ -116,6 +128,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         storage: window.sessionStorage,
         win: window,
         next,
+        onAuthorizeUrl: logAuthorizeUrl,
       }).then((res) => {
         if (res.error) {
           setAuthError({ code: 'network', message: 'Unable to start sign-in. Please try again.' });
@@ -134,6 +147,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         storage: window.sessionStorage,
         win: window,
         next,
+        onAuthorizeUrl: logAuthorizeUrl,
       }).then((res) => {
         if (res.error) {
           setAuthError({ code: 'network', message: 'Unable to start sign-up. Please try again.' });
