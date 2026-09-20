@@ -4,6 +4,7 @@ import { PriorityBadge, CategoryBadge } from '../components/StatusBadge';
 import { Panel } from '../components/ui/Panel';
 import { useToast } from '../components/ui/Toast';
 import { useAuth } from '../auth/useAuth';
+import { apiUrl } from '../lib/api';
 import {
   Upload,
   MapPin,
@@ -115,7 +116,7 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({ onCaseCreated,
         const reader = new FileReader();
         reader.onloadend = async () => {
           try {
-            const res = await fetch('/api/transcribe', {
+            const res = await fetch(apiUrl('/api/transcribe'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ audio: reader.result, contentType: 'audio/webm', language }),
@@ -200,7 +201,7 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({ onCaseCreated,
       setStageIndex((prev) => (prev < PROCESSING_STAGES.length - 1 ? prev + 1 : prev));
     }, 520);
     try {
-      const res = await fetch('/api/analyze', {
+      const res = await fetch(apiUrl('/api/analyze'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -243,7 +244,7 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({ onCaseCreated,
         image: image || undefined,
         video_url: videoUrl || undefined,
       };
-      const res = await fetch('/api/cases', {
+      const res = await fetch(apiUrl('/api/cases'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

@@ -22,6 +22,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { CivicCase, CivicCategory } from '../types';
+import { apiUrl } from '../lib/api';
 import {
   AIDevelopmentPriority,
   PolicyFilterState,
@@ -115,7 +116,7 @@ export const PolicyPlanningPage: React.FC<PolicyPlanningPageProps> = ({
   const handleRegeneratePriorities = async () => {
     setIsGeneratingPriorities(true);
     try {
-      const res = await fetch('/api/policy/recommendations', {
+      const res = await fetch(apiUrl('/api/policy/recommendations'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

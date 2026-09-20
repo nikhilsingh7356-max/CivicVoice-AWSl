@@ -1,8 +1,65 @@
 /**
- * Safe API Fetch Utility for CivicVoice AI
- * Prevents "Unexpected token 'T', The page could not be found" JSON parse errors
- * when AWS API Gateway or proxies return HTML error pages or non-JSON responses.
+ * Centralized API URL construction + safe fetch for CivicVoice.
+ *
+ * All application API requests must go through `apiUrl()` so that:
+ * - the API Gateway base (VITE_API_BASE_URL) is used in production,
+ * - relative /api/... relative paths keep working for local development,
+ * - a missing production API base fails loudly instead of silently hitting
+ *   the Amplify SPA origin and parsing HTML as JSON.
  */
+
+/** Resolve the configured API Gateway base URL from Vite env (trimmed). */
+function readApiBaseUrl(): string {
+  const env = (import.meta as unknown as { env?: Record<string, unknown> }).env;
+  const raw = typeof env?.VITE_API_BASE_URL === 'string' ? env.VITE_API_BASE_URL : '';
+  return raw.trim().replace(/\/+$/, '');
+}
+
+/** True when running a production build (vite build). Absent under tsx tests. */
+function readIsProduction(): boolean {
+  const env = (import.meta as unknown as { env?: Record<string, unknown> }).env;
+  const prod = env?.PROD;
+  return prod === true || prod === 'true';
+}
+
+/** Configured API Gateway base URL (no trailing slash, '' when unset). */
+export const API_BASE_URL: string = readApiBaseUrl();
+
+/** True in production builds (vite build). */
+export const IS_PRODUCTION_BUILD: boolean = readIsProduction();
+
+/**
+ * Pure URL joiner — no env access, fully unit-testable.
+ *
+ * - Trims trailing slashes from the base URL.
+ * - Trims leading slashes from the path.
+ * - Never produces a double slash at the seam.
+ * - Preserves query strings (everything from the first `?` on the path).
+ * - When no base URL is available: returns the relative path unchanged for
+ *   local development, or THROWS in production so a misconfigured deploy
+ *   fails clearly instead of hitting the Amplify SPA origin.
+ */
+export function resolveApiUrl(baseUrl: string, isProduction: boolean, path: string): string {
+  if (!baseUrl) {
+    if (isProduction) {
+      throw new Error(
+        'VITE_API_BASE_URL is not configured. Set it to the API Gateway URL ' +
+          '(e.g. https://w2o3ktyph9.execute-api.ap-south-1.amazonaws.com/Prod) in the ' +
+          'Amplify environment variables and rebuild before making API calls.'
+      );
+    }
+    // Local development: same-origin relative /api/... (vite dev or the bundled
+    // node server on PORT) — the established dev behavior.
+    return path.startsWith('/') ? path : `/${path}`;
+  }
+  const cleanPath = path.replace(/^\/+/, '');
+  return `${baseUrl.replace(/\/+$/, '')}/${cleanPath}`;
+}
+
+/** Build a full API URL for the given API path (e.g. `/api/cases`). */
+export function apiUrl(path: string): string {
+  return resolveApiUrl(API_BASE_URL, IS_PRODUCTION_BUILD, path);
+}
 
 export interface ApiResponse<T = any> {
   ok: boolean;

@@ -17,6 +17,7 @@ import { AnalyticsPage } from './pages/AnalyticsPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { PolicyPlanningPage } from './pages/PolicyPlanningPage';
 import { useToast } from './components/ui/Toast';
+import { apiUrl } from './lib/api';
 
 /** Root prefixes that belong to the authenticated operations area. */
 const APP_PREFIXES = ['/app', '/cases', '/report', '/map', '/analytics', '/notifications', '/policy', '/planning', '/citizen'];
@@ -54,7 +55,7 @@ export function App() {
   const fetchCases = useCallback(async (silent = false) => {
     if (!silent) setApiStatus('connecting');
     try {
-      const res = await fetch('/api/cases');
+      const res = await fetch(apiUrl('/api/cases'));
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.cases)) {
@@ -101,7 +102,7 @@ export function App() {
   const handleUpdateStatus = useCallback(
     async (caseId: string, newStatus: CaseStatus, assignedOfficer?: string | null) => {
       try {
-        const response = await fetch(`/api/cases/${caseId}/status`, {
+        const response = await fetch(apiUrl(`/api/cases/${caseId}/status`), {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: newStatus, assigned_officer: assignedOfficer }),

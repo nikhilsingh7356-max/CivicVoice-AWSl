@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { CivicCase } from '../types';
 import { DEMO_POTHOLE_IMAGE, DEMO_WATER_IMAGE, DEMO_WASTE_IMAGE } from '../demoImages';
+import { apiUrl } from '../lib/api';
 
 interface MessagingSimulatorModalProps {
   isOpen: boolean;
@@ -107,7 +108,7 @@ export const MessagingSimulatorModal: React.FC<MessagingSimulatorModalProps> = (
       await new Promise((r) => setTimeout(r, 400));
 
       setCurrentStep('Invoking Amazon Bedrock 2.5 Flash for Multimodal & Semantic Intake...');
-      const analyzeRes = await fetch('/api/analyze', {
+      const analyzeRes = await fetch(apiUrl('/api/analyze'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -130,7 +131,7 @@ export const MessagingSimulatorModal: React.FC<MessagingSimulatorModalProps> = (
       const analysis = analyzeData.analysis;
 
       setCurrentStep('Structuring civic case & executing Configured Authority Routing...');
-      const caseRes = await fetch('/api/cases', {
+      const caseRes = await fetch(apiUrl('/api/cases'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

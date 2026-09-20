@@ -12,6 +12,7 @@ import { Panel } from '../components/ui/Panel';
 import { ScaleBar } from '../components/ui/Charts';
 import { useToast } from '../components/ui/Toast';
 import { SUGGESTED_OFFICER_ROLES } from '../server/lifecycle';
+import { apiUrl } from '../lib/api';
 import {
   ArrowLeft,
   Building2,
@@ -96,7 +97,7 @@ export const CaseDetailPage: React.FC<CaseDetailPageProps> = ({
   const refreshHistory = async () => {
     setIsHistoryLoading(true);
     try {
-      const res = await fetch(`/api/cases/${civicCase.case_id}/history`);
+      const res = await fetch(apiUrl(`/api/cases/${civicCase.case_id}/history`));
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.history)) setHistory(data.history);
@@ -145,7 +146,7 @@ export const CaseDetailPage: React.FC<CaseDetailPageProps> = ({
     }
     setIsUpdating(true);
     try {
-      const res = await fetch(`/api/cases/${civicCase.case_id}/assignment`, {
+      const res = await fetch(apiUrl(`/api/cases/${civicCase.case_id}/assignment`), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -184,7 +185,7 @@ export const CaseDetailPage: React.FC<CaseDetailPageProps> = ({
     }
     setIsSubmittingOverride(true);
     try {
-      const res = await fetch(`/api/cases/${civicCase.case_id}`, {
+      const res = await fetch(apiUrl(`/api/cases/${civicCase.case_id}`), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -211,7 +212,7 @@ export const CaseDetailPage: React.FC<CaseDetailPageProps> = ({
     if (!text.trim()) return;
     setIsAskingAi(true);
     try {
-      const res = await fetch(`/api/cases/${civicCase.case_id}/ask-ai`, {
+      const res = await fetch(apiUrl(`/api/cases/${civicCase.case_id}/ask-ai`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: text }),
