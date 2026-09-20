@@ -1,5 +1,7 @@
 import {
   AuthConfig,
+  AuthError,
+  AuthErrorCode,
   AuthMode,
   AuthSession,
   AuthStatus,
@@ -20,9 +22,18 @@ export const AUTHORIZE_PATH = '/oauth2/authorize';
 export const TOKEN_PATH = '/oauth2/token';
 export const LOGOUT_PATH = '/logout';
 
+/**
+ * Real Cognito sessions live in this slot.
+ * Development (demo) sessions live in a SEPARATE slot so a demo login can
+ * never overwrite a real user's Cognito tokens.
+ */
 export const SESSION_STORAGE_KEY = 'civicvoice:auth-session';
+export const DEMO_SESSION_STORAGE_KEY = 'civicvoice:auth-session-demo';
 export const NEXT_PATH_KEY = 'civicvoice:auth-next';
 export const PKCE_STORAGE_KEY = 'civicvoice:auth-pkce';
+
+/** How long an OAuth PKCE/state record stays valid before it is rejected as stale. */
+export const PKCE_TTL_MS = 10 * 60 * 1000;
 
 export const DEFAULT_DEV_USER_ID = 'dev-user';
 export const DEFAULT_DEV_EMAIL = 'operations@civicvoice.local';
@@ -206,12 +217,15 @@ export function getUserFromIdToken(payload: JwtPayload | null): AuthUser | null 
   const groups = Array.isArray(payload['cognito:groups'])
     ? payload['cognito:groups']
     : undefined;
+  const username = (payload.username ?? payload['cognito:username'] ?? payload.preferred_username) as
+    | string
+    | undefined;
   return {
     id: payload.sub,
     email: payload.email ?? '',
     emailVerified: payload.email_verified,
-    name: payload.name,
-    username: payload.username,
+    name: payload.name || username,
+    username,
     groups,
     roleHint: typeof payload['custom:role'] === 'string' ? payload['custom:role'] : undefined,
     developmentMode: false,
@@ -311,6 +325,71 @@ export function isStoredSession(value: unknown): value is AuthSession {
   const s = value as Partial<AuthSession>;
   if (!s.user || typeof s.user !== 'object') return false;
   return typeof s.accessToken === 'string' && typeof s.idToken === 'string' && typeof s.expiresAt === 'number';
+}
+
+/** Validate the public (non-secret) Cognito configuration loaded from env. */
+export function validateAuthConfig(cfg: AuthConfig): string[] {
+  const errors: string[] = [];
+  if (!cfg.domain || !/^https:\/\/[^/]+\.amazoncognito\.com$/.test(cfg.domain.trim())) {
+    errors.push('VITE_COGNITO_DOMAIN must be a valid https://<prefix>.auth.<region>.amazoncognito.com URL.');
+  }
+  if (!cfg.clientId || !/^[A-Za-z0-9]+$/.test(cfg.clientId.trim())) {
+    errors.push('VITE_COGNITO_CLIENT_ID must be a non-empty app client id.');
+  }
+  if (!cfg.userPoolId || !/^[a-z0-9-]+_[A-Za-z0-9]+$/.test(cfg.userPoolId.trim())) {
+    errors.push('VITE_COGNITO_USER_POOL_ID must match the region_userpoolid form.');
+  }
+  if (!cfg.redirectUri || !/^https?:\/\/[^/]+(\/.*)?$/.test(cfg.redirectUri.trim())) {
+    errors.push('VITE_COGNITO_REDIRECT_URI must be a valid http(s) URL.');
+  } else {
+    const uri = new URL(cfg.redirectUri);
+    if (!uri.pathname.endsWith('/auth/callback')) {
+      errors.push('VITE_COGNITO_REDIRECT_URI must end with /auth/callback.');
+    }
+  }
+  return errors;
+}
+
+/** Map a failed sign-in reason onto a safe, user-facing AuthError. */
+export function classifySignInFailure(
+  reason: 'state-mismatch' | 'pkce-expired' | 'error' | 'network' | 'invalid-callback',
+  technical?: string
+): AuthError {
+  switch (reason) {
+    case 'state-mismatch':
+      return {
+        code: 'state-mismatch',
+        message: "The sign-in request didn't match how it started. Please try again.",
+        detail: technical,
+      };
+    case 'pkce-expired':
+      return {
+        code: 'pkce-expired',
+        message: 'The sign-in request expired. Please start again.',
+        detail: technical,
+      };
+    case 'invalid-callback':
+      return {
+        code: 'invalid-callback',
+        message: 'The sign-in callback is incomplete or invalid. Please start again.',
+        detail: technical,
+      };
+    case 'error':
+      return technical?.toLowerCase().includes('access_denied')
+        ? { code: 'oauth-denied', message: 'You cancelled sign-in. Nothing was created — try again when ready.', detail: technical }
+        : { code: 'oauth-denied', message: 'Sign-in was not completed by the identity provider.', detail: technical };
+    case 'network':
+      return { code: 'token-exchange-failed', message: 'Unable to connect to CivicVoice. Check the server and try again.', detail: technical };
+  }
+}
+
+/** True when a stored PKCE record is structurally valid and still fresh. */
+export function isPkceUsable(record: StoredPkce | null, nowMs: number): boolean {
+  if (!record) return false;
+  if (typeof record.state !== 'string' || typeof record.verifier !== 'string') return false;
+  if (record.state.length < 16 || record.verifier.length < 32) return false;
+  if (typeof record.createdAt !== 'number' || nowMs - record.createdAt > PKCE_TTL_MS) return false;
+  return true;
 }
 
 /** Serialize the PKCE pre-auth record. */

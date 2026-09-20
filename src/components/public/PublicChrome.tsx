@@ -69,7 +69,7 @@ export const BrandLockup: React.FC = () => (
 );
 
 export const PublicHeader: React.FC<PublicChromeProps> = ({ onNavigate }) => {
-  const { status, user, login } = useAuth();
+  const { status, user } = useAuth();
   const authenticated = status === 'authenticated' && Boolean(user);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -80,11 +80,19 @@ export const PublicHeader: React.FC<PublicChromeProps> = ({ onNavigate }) => {
 
   const report = () => {
     setMenuOpen(false);
-    if (authenticated) {
-      onNavigate('/app/report');
-    } else {
-      login('/app/report');
-    }
+    // Route through /app/report: ProtectedRoute sends unauthenticated users to
+    // /login?next=/app/report where they can pick Cognito or the local demo.
+    onNavigate('/app/report');
+  };
+
+  const startLogin = () => {
+    setMenuOpen(false);
+    onNavigate('/login');
+  };
+
+  const startSignup = () => {
+    setMenuOpen(false);
+    onNavigate('/signup');
   };
 
   return (
@@ -113,10 +121,10 @@ export const PublicHeader: React.FC<PublicChromeProps> = ({ onNavigate }) => {
             </button>
           ) : (
             <>
-              <button onClick={() => login()} className="btn btn-ghost btn-sm">
+              <button onClick={startLogin} className="btn btn-ghost btn-sm">
                 Log in
               </button>
-              <button onClick={() => login('/app')} className="btn btn-primary btn-sm">
+              <button onClick={startSignup} className="btn btn-primary btn-sm">
                 Create account
               </button>
             </>
@@ -153,10 +161,10 @@ export const PublicHeader: React.FC<PublicChromeProps> = ({ onNavigate }) => {
               </button>
             ) : (
               <>
-                <button onClick={() => login()} className="btn btn-ghost btn-sm flex-1">
+                <button onClick={startLogin} className="btn btn-ghost btn-sm flex-1">
                   Log in
                 </button>
-                <button onClick={() => login('/app')} className="btn btn-primary btn-sm flex-1">
+                <button onClick={startSignup} className="btn btn-primary btn-sm flex-1">
                   Create account
                 </button>
               </>
@@ -174,7 +182,6 @@ export const PublicHeader: React.FC<PublicChromeProps> = ({ onNavigate }) => {
 };
 
 export const PublicFooter: React.FC<PublicChromeProps> = ({ onNavigate }) => {
-  const { login } = useAuth();
   const year = new Date().getFullYear();
   return (
     <footer className="border-t border-cv-line bg-cv-subtle">
@@ -214,8 +221,11 @@ export const PublicFooter: React.FC<PublicChromeProps> = ({ onNavigate }) => {
               <button onClick={() => onNavigate('/')} className="text-[13px] text-navy-600 hover:text-navy-900 hover:underline">
                 Home
               </button>
-              <button onClick={() => login()} className="text-[13px] text-navy-600 hover:text-navy-900 hover:underline">
+              <button onClick={() => onNavigate('/login')} className="text-[13px] text-navy-600 hover:text-navy-900 hover:underline">
                 Log in
+              </button>
+              <button onClick={() => onNavigate('/signup')} className="text-[13px] text-navy-600 hover:text-navy-900 hover:underline">
+                Create account
               </button>
               <button onClick={() => onNavigate('/app')} className="text-[13px] text-navy-600 hover:text-navy-900 hover:underline">
                 Dashboard

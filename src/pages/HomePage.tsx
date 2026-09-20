@@ -136,7 +136,7 @@ const SAFETY = [
 ];
 
 const HomePage: React.FC<PublicChromeProps> = ({ onNavigate }) => {
-  const { status, user, login } = useAuth();
+  const { status, user } = useAuth();
   const authenticated = status === 'authenticated' && Boolean(user);
 
   useEffect(() => {
@@ -144,11 +144,9 @@ const HomePage: React.FC<PublicChromeProps> = ({ onNavigate }) => {
   }, []);
 
   const report = () => {
-    if (authenticated) {
-      onNavigate('/app/report');
-    } else {
-      login('/app/report');
-    }
+    // Route through /app/report: ProtectedRoute sends unauthenticated users to
+    // /login?next=/app/report where they can pick Cognito or the local demo.
+    onNavigate('/app/report');
   };
 
   const metrics = authenticated && user ? user : null;

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ArrowRight, ChevronDown, Loader2, LogIn, ShieldCheck, Sparkles, UserPlus } from 'lucide-react';
+import { AlertTriangle, ArrowRight, ChevronDown, Loader2, LogIn, ShieldCheck, Sparkles, UserPlus } from 'lucide-react';
 import { useAuth } from '../auth/useAuth';
 import {
   DevModeBanner,
@@ -28,7 +28,7 @@ function readNextTarget(): string | undefined {
  * without AWS, even when Cognito is configured.
  */
 export const AuthEntryPage: React.FC<AuthEntryPageProps> = ({ mode, onNavigate }) => {
-  const { status, user, login, signup, loginWithDemo } = useAuth();
+  const { status, user, login, signup, loginWithDemo, authError } = useAuth();
   const [initError, setInitError] = useState<string | null>(null);
   const [email, setEmail] = useState<string>(DEMO_ACCOUNTS[0].email);
   const [password, setPassword] = useState<string>(DEMO_ACCOUNTS[0].password);
@@ -80,6 +80,24 @@ export const AuthEntryPage: React.FC<AuthEntryPageProps> = ({ mode, onNavigate }
                 ? 'Authentication is handled by Amazon Cognito. You can also use the local development demo below — CivicVoice never stores your password.'
                 : 'Amazon Cognito isn\'t configured, so sign in with the local demo credentials. CivicVoice never stores your password.'}
             </p>
+
+            {authError && !authenticated && status !== 'loading' && (
+              <div role="alert" className="mt-4 flex items-start gap-2.5 rounded-md border border-red-200 bg-red-50 px-3.5 py-3">
+                {authError.code === 'session-expired' ? (
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-600" aria-hidden="true" />
+                ) : (
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0 text-red-600" aria-hidden="true" />
+                )}
+                <div>
+                  <p className="text-[13px] font-medium text-navy-900">{authError.message}</p>
+                  {authError.code === 'session-expired' ? (
+                    <p className="mt-0.5 text-[12px] text-navy-700">Please sign in again to continue.</p>
+                  ) : authError.detail ? (
+                    <p className="mt-0.5 text-[12px] text-navy-700">{authError.detail}</p>
+                  ) : null}
+                </div>
+              </div>
+            )}
 
             <div className="mt-6">
               {status === 'loading' ? (

@@ -1,16 +1,19 @@
-import { AuthConfig, AuthSession, SignInMode, SignInOutcome, StoredPkce } from './types';
+import { AuthConfig, AuthSession, RestoreResult, SignInMode, SignInOutcome, StoredPkce } from './types';
 import {
   AUTHORIZE_PATH,
+  DEMO_SESSION_STORAGE_KEY,
   NEXT_PATH_KEY,
   PKCE_STORAGE_KEY,
   SESSION_STORAGE_KEY,
   buildAuthorizeUrl,
   buildLogoutUrl,
   buildSessionFromTokens,
+  decodeJwtPayload,
   generatePkce,
   createDevelopmentSession,
   DEMO_ACCOUNTS,
   DemoAccount,
+  isPkceUsable,
   isSessionExpired,
   isStoredSession,
   isSafeInternalPath,
@@ -36,42 +39,54 @@ export interface FetchLike {
   (input: string, init?: RequestInit): Promise<Response>;
 }
 
-type WindowLike = Pick<Window, 'location' | 'history'>;
+type WindowLike = {
+  location: { assign(url: string): void };
+  history?: unknown;
+};
 
 export interface InitiateSignInResult {
   dev: boolean;
   error?: string;
 }
 
-/** Read the stored session from session storage (validated). */
-export function readStoredSession(storage: StorageLike, nowMs: number): AuthSession | null {
-  const raw = storage.getItem(SESSION_STORAGE_KEY);
+/** Read a session from a specific storage slot (validated). */
+function readStoredSessionAt(storage: StorageLike, key: string, nowMs: number): AuthSession | null {
+  const raw = storage.getItem(key);
   if (!raw) return null;
   try {
     const parsed: unknown = JSON.parse(raw);
     if (!isStoredSession(parsed)) return null;
     return parsed;
   } catch {
-    storage.removeItem(SESSION_STORAGE_KEY);
+    storage.removeItem(key);
     return null;
   }
 }
 
-/** Persist a session (used by dev mode + restore after refresh). */
-export function writeStoredSession(storage: StorageLike, session: AuthSession): void {
-  storage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+/** Read the persisted real Cognito session from its slot. */
+export function readStoredSession(storage: StorageLike, nowMs: number): AuthSession | null {
+  return readStoredSessionAt(storage, SESSION_STORAGE_KEY, nowMs);
 }
 
-/** Persist a validated development-mode session for the given demo account. */
+/** Write into the real Cognito slot and drop any demo slot so exactly one session is canonical. */
+function writeStoredSession(storage: StorageLike, session: AuthSession): void {
+  storage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+  storage.removeItem(DEMO_SESSION_STORAGE_KEY);
+}
+
+/** Persist a validated development-mode session in its own slot (never touches real Cognito storage). */
 export function writeDemoSession(storage: StorageLike, account: DemoAccount, nowMs: number): AuthSession {
   const session = createDevelopmentSession(nowMs, account);
-  writeStoredSession(storage, session);
+  storage.setItem(DEMO_SESSION_STORAGE_KEY, JSON.stringify(session));
+  storage.removeItem(PKCE_STORAGE_KEY);
+  storage.removeItem(NEXT_PATH_KEY);
   return session;
 }
 
-/** Clear every auth-related storage entry used by this session. */
+/** Clear every auth-related storage entry used by this session (real, demo, PKCE, return path). */
 export function clearAuthStorage(storage: StorageLike): void {
   storage.removeItem(SESSION_STORAGE_KEY);
+  storage.removeItem(DEMO_SESSION_STORAGE_KEY);
   storage.removeItem(PKCE_STORAGE_KEY);
   storage.removeItem(NEXT_PATH_KEY);
 }
@@ -95,17 +110,17 @@ export async function initiateSignIn(
 ): Promise<InitiateSignInResult> {
   const { storage, win, next } = input;
   if (!cfg.configured) {
-    writeStoredSession(storage, createDevelopmentSession(Date.now()));
-    const target = next ?? '/app';
+    writeDemoSession(storage, DEMO_ACCOUNTS[0], Date.now());
+    const target = isSafeInternalPath(next) ? next : '/app';
     win.location.assign(target);
     return { dev: true };
   }
   try {
     const { verifier, challenge } = await generatePkce();
     const state = verifier.slice(0, 32);
-    const pkceRecord: StoredPkce = { state, verifier };
+    const pkceRecord: StoredPkce = { state, verifier, createdAt: Date.now() };
     storage.setItem(PKCE_STORAGE_KEY, serializePkce(pkceRecord));
-    if (next) storage.setItem(NEXT_PATH_KEY, next);
+    if (isSafeInternalPath(next)) storage.setItem(NEXT_PATH_KEY, next);
     const url = buildAuthorizeUrl(cfg, { mode, state, codeChallenge: challenge });
     win.location.assign(url);
     return { dev: false };
@@ -149,11 +164,18 @@ async function exchangeCodeForTokens(
   if (!t.access_token || !t.id_token) {
     throw new Error('Token response was missing tokens.');
   }
+  const payload = decodeJwtPayload(t.id_token);
+  if (!payload?.sub) {
+    throw new Error('Token response contained an invalid id_token.');
+  }
+  if (typeof t.expires_in !== 'number' || t.expires_in <= 0) {
+    throw new Error('Token response contained an invalid expiry.');
+  }
   return {
     accessToken: t.access_token,
     idToken: t.id_token,
     refreshToken: t.refresh_token ?? undefined,
-    expiresIn: typeof t.expires_in === 'number' ? t.expires_in : 3600,
+    expiresIn: t.expires_in,
   };
 }
 
@@ -186,6 +208,11 @@ async function refreshTokens(
 /**
  * Complete the OAuth callback. Returns a normalized outcome and (when reading a
  * real code from Cognito) the path the user originally intended to reach.
+ *
+ * The authorization code is processed exactly once per sign-in:
+ * - On success the PKCE record and return path are removed.
+ * - On ANY failure the PKCE record is removed, so a stale code can never be
+ *   exchanged twice and revisiting the callback URL cannot replay it.
  */
 export async function completeSignIn(
   cfg: AuthConfig,
@@ -197,7 +224,7 @@ export async function completeSignIn(
     fetcher?: FetchLike;
   }
 ): Promise<SignInOutcome> {
-  const { search, origin, storage, nowMs } = input;
+  const { search, storage, nowMs } = input;
   const fetcher: FetchLike = input.fetcher ?? ((...args) => fetch(...args));
   const params = parseCallbackParams(search.replace(/^\?/, ''));
 
@@ -205,12 +232,17 @@ export async function completeSignIn(
   const devNext = isSafeInternalPath(devNextRaw) ? devNextRaw : '/app';
 
   if (!cfg.configured) {
-    writeStoredSession(storage, createDevelopmentSession(nowMs));
-    storage.removeItem(NEXT_PATH_KEY);
+    writeDemoSession(storage, DEMO_ACCOUNTS[0], nowMs);
     return { ok: true, user: createDevelopmentSession(nowMs).user, next: devNext, developmentMode: true };
   }
 
+  const clearCallbackState = () => {
+    storage.removeItem(PKCE_STORAGE_KEY);
+    storage.removeItem(NEXT_PATH_KEY);
+  };
+
   if (params.error) {
+    clearCallbackState();
     return {
       ok: false,
       reason: 'error',
@@ -219,22 +251,32 @@ export async function completeSignIn(
     };
   }
 
-  const storedRaw = storage.getItem(PKCE_STORAGE_KEY);
   let record: StoredPkce | null = null;
+  if (!params.code) {
+    clearCallbackState();
+    return { ok: false, reason: 'invalid-callback', message: 'The sign-in callback is missing an authorization code.' };
+  }
+
+  const storedRaw = storage.getItem(PKCE_STORAGE_KEY);
   try {
     record = storedRaw ? (JSON.parse(storedRaw) as StoredPkce) : null;
   } catch {
     record = null;
   }
 
-  if (!params.code) {
-    return { ok: false, reason: 'error', message: 'We couldn\'t sign you in. Please try again.' };
+  if (!record || !isPkceUsable(record, nowMs)) {
+    clearCallbackState();
+    return { ok: false, reason: 'pkce-expired', message: 'The sign-in request expired. Please start again.' };
   }
-  if (!record || !statesMatch(record.state, params.state)) {
-    return { ok: false, reason: 'state-mismatch', message: 'We couldn\'t sign you in. Please try again.' };
+  if (!statesMatch(record.state, params.state)) {
+    clearCallbackState();
+    return { ok: false, reason: 'state-mismatch', message: 'The sign-in request didn\'t match. Please try again.' };
   }
 
-  const redirectUri = `${origin}/auth/callback`;
+  // The redirect_uri used in the token exchange must EXACTLY match the one sent
+  // to /oauth2/authorize. Use the configured redirect URI (not a re-derived URL)
+  // so localhost and production remain consistent.
+  const redirectUri = cfg.redirectUri;
   try {
     const tokens = await exchangeCodeForTokens(cfg, {
       code: params.code,
@@ -250,12 +292,12 @@ export async function completeSignIn(
       nowMs,
     });
     writeStoredSession(storage, session);
-    storage.removeItem(PKCE_STORAGE_KEY);
     const storedNext = storage.getItem(NEXT_PATH_KEY);
-    storage.removeItem(NEXT_PATH_KEY);
+    clearCallbackState();
     const next = isSafeInternalPath(storedNext) ? storedNext : '/app';
     return { ok: true, user: session.user, next, developmentMode: false };
   } catch (err) {
+    clearCallbackState();
     return {
       ok: false,
       reason: 'network',
@@ -266,33 +308,40 @@ export async function completeSignIn(
 }
 
 /**
- * Restore the session on application load, transparently refreshing an
- * expiring access token when a refresh token is available.
+ * Restore the session on application load.
+ *
+ * Precedence: a development (demo) session in its own storage slot wins over a
+ * real Cognito session, and the two NEVER share a slot. Real sessions are
+ * transparently refreshed (access token rotation) when within the refresh
+ * window; a session that can no longer be restored is reported explicitly so
+ * the UI can say "session expired" instead of silently dropping the user.
  */
 export async function restoreSession(
   cfg: AuthConfig,
   input: { storage: StorageLike; nowMs: number; fetcher?: FetchLike }
-): Promise<AuthSession | null> {
+): Promise<RestoreResult> {
   const { storage, nowMs } = input;
-  const session = readStoredSession(storage, nowMs);
-  if (!session) return null;
 
-  if (session.user.developmentMode) {
-    if (isSessionExpired(session, nowMs)) {
-      const account = DEMO_ACCOUNTS.find((a) => a.id === session.user.id) ?? DEMO_ACCOUNTS[0];
+  const demo = readStoredSessionAt(storage, DEMO_SESSION_STORAGE_KEY, nowMs);
+  if (demo?.user.developmentMode) {
+    if (isSessionExpired(demo, nowMs)) {
+      const account = DEMO_ACCOUNTS.find((a) => a.id === demo.user.id) ?? DEMO_ACCOUNTS[0];
       const fresh = createDevelopmentSession(nowMs, account);
-      writeStoredSession(storage, fresh);
-      return fresh;
+      storage.setItem(DEMO_SESSION_STORAGE_KEY, JSON.stringify(fresh));
+      return { kind: 'session', session: fresh };
     }
-    return session;
+    return { kind: 'session', session: demo };
   }
+
+  const session = readStoredSession(storage, nowMs);
+  if (!session) return { kind: 'none' };
 
   if (!isSessionExpired(session, nowMs)) {
     if (shouldRefresh(session, nowMs) && session.refreshToken && cfg.configured) {
       const fetcher: FetchLike = input.fetcher ?? ((...args) => fetch(...args));
       const refreshed = await refreshTokens(cfg, {
         refreshToken: session.refreshToken,
-        redirectUri: `${window.location.origin}/auth/callback`,
+        redirectUri: cfg.redirectUri,
         fetcher,
       });
       if (refreshed) {
@@ -304,15 +353,17 @@ export async function restoreSession(
           nowMs,
         });
         writeStoredSession(storage, updated);
-        return updated;
+        return { kind: 'session', session: updated };
       }
+      clearAuthStorage(storage);
+      return { kind: 'refresh-failed' };
     }
-    return session;
+    return { kind: 'session', session };
   }
 
   // Token is expired and cannot be refreshed — drop the local session.
   clearAuthStorage(storage);
-  return null;
+  return { kind: 'expired' };
 }
 
 /**

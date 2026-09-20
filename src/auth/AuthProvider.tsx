@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AuthSession } from './types';
+import { AuthError, AuthSession } from './types';
 import { authConfig } from './config';
 import {
   completeSignIn,
@@ -10,7 +10,7 @@ import {
   writeDemoSession,
 } from './auth';
 import { AuthContext, AuthContextValue } from './useAuth';
-import { deriveAuthMode, isSafeInternalPath, validateDemoCredentials } from './logic';
+import { classifySignInFailure, deriveAuthMode, isSafeInternalPath, validateDemoCredentials } from './logic';
 import { useToast } from '../components/ui/Toast';
 
 function isCallbackRoute(pathname: string): boolean {
@@ -26,9 +26,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const { notify } = useToast();
   const [status, setStatus] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
   const [session, setSession] = useState<AuthSession | null>(null);
+  const [authError, setAuthError] = useState<AuthError | null>(null);
   const [processingCallback, setProcessingCallback] = useState(false);
   const [callbackError, setCallbackError] = useState<string | null>(null);
 
+  // Guard so the OAuth callback is processed exactly once, even under React
+  // StrictMode's double-invoked effects in development. Refs persist across
+  // StrictMode's simulated unmount/remount of the same instance.
   const doneRef = useRef(false);
 
   useEffect(() => {
@@ -52,13 +56,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const restored = readStoredSession(window.sessionStorage, Date.now());
           setSession(restored);
           setStatus('authenticated');
+          setAuthError(null);
+          setCallbackError(null);
           const target = outcome.next.startsWith('/') ? outcome.next : `/${outcome.next}`;
           window.history.replaceState({}, '', target);
           window.dispatchEvent(new PopStateEvent('popstate'));
         } else {
           window.history.replaceState({}, '', pathname);
           setStatus('unauthenticated');
+          setSession(null);
           setCallbackError(outcome.message);
+          setAuthError(classifySignInFailure(outcome.reason, outcome.technical));
         }
         return;
       }
@@ -68,11 +76,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           storage: window.sessionStorage,
           nowMs: Date.now(),
         });
-        setSession(restored);
-        setStatus(restored ? 'authenticated' : 'unauthenticated');
+        if (restored.kind === 'session') {
+          setSession(restored.session);
+          setStatus('authenticated');
+          setAuthError(null);
+        } else {
+          setSession(null);
+          setStatus('unauthenticated');
+          if (restored.kind === 'expired' || restored.kind === 'refresh-failed') {
+            setAuthError({
+              code: 'session-expired',
+              message: 'Your session has expired. Please sign in again.',
+            });
+          } else {
+            setAuthError(null);
+          }
+        }
       } catch {
         setSession(null);
         setStatus('unauthenticated');
+        setAuthError({ code: 'network', message: 'Unable to verify your sign-in session.' });
       }
     };
 
@@ -84,6 +107,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const authMode = deriveAuthMode(status, user);
 
     const login = (next?: string) => {
+      setAuthError(null);
       if (!authConfig.configured) {
         window.location.assign(buildEntryUrl('login', next));
         return;
@@ -94,13 +118,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         next,
       }).then((res) => {
         if (res.error) {
-          setCallbackError('Unable to connect to CivicVoice.');
-          notify('error', 'Unable to connect to CivicVoice.');
+          setAuthError({ code: 'network', message: 'Unable to start sign-in. Please try again.' });
+          notify('error', 'Unable to start sign-in. Please try again.');
         }
       });
     };
 
     const signup = (next?: string) => {
+      setAuthError(null);
       if (!authConfig.configured) {
         window.location.assign(buildEntryUrl('signup', next));
         return;
@@ -111,8 +136,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         next,
       }).then((res) => {
         if (res.error) {
-          setCallbackError('Unable to connect to CivicVoice.');
-          notify('error', 'Unable to connect to CivicVoice.');
+          setAuthError({ code: 'network', message: 'Unable to start sign-up. Please try again.' });
+          notify('error', 'Unable to start sign-up. Please try again.');
         }
       });
     };
@@ -120,9 +145,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const loginWithDemo = (email: string, password: string) => {
       const checked = validateDemoCredentials(email, password);
       if (checked.ok) {
-        const session = writeDemoSession(window.sessionStorage, checked.account, Date.now());
-        setSession(session);
+        const demoSession = writeDemoSession(window.sessionStorage, checked.account, Date.now());
+        setSession(demoSession);
         setStatus('authenticated');
+        setAuthError(null);
+        setCallbackError(null);
       }
       return checked;
     };
@@ -134,6 +161,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       setSession(null);
       setStatus('unauthenticated');
+      setAuthError(null);
+      setCallbackError(null);
       if (result.dev) {
         window.location.assign('/');
       } else if (result.url) {
@@ -146,6 +175,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       user,
       developmentMode: user?.developmentMode ?? false,
       authMode,
+      authError,
       initializing: status === 'loading',
       processingCallback,
       callbackError,
@@ -154,7 +184,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       loginWithDemo,
       logout,
     };
-  }, [status, session, processingCallback, callbackError, notify]);
+  }, [status, session, authError, processingCallback, callbackError, notify]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

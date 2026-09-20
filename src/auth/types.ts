@@ -23,6 +23,33 @@ export type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
  */
 export type AuthMode = 'cognito' | 'demo';
 
+/** Machine-readable authentication failure classification (never contains tokens). */
+export type AuthErrorCode =
+  | 'config-missing'
+  | 'oauth-denied'
+  | 'code-missing'
+  | 'state-mismatch'
+  | 'pkce-expired'
+  | 'token-exchange-failed'
+  | 'network'
+  | 'session-expired'
+  | 'invalid-callback'
+  | 'invalid-logout';
+
+export interface AuthError {
+  code: AuthErrorCode;
+  message: string;
+  /** Safe, non-secret technical detail for display (e.g. Cognito error_description). */
+  detail?: string;
+}
+
+/** Outcome of restoring a persisted session at application load. */
+export type RestoreResult =
+  | { kind: 'session'; session: AuthSession }
+  | { kind: 'none' }
+  | { kind: 'expired' }
+  | { kind: 'refresh-failed' };
+
 export interface AuthSession {
   user: AuthUser;
   accessToken: string;
@@ -66,9 +93,16 @@ export type SignInMode = 'login' | 'signup';
 
 export type SignInOutcome =
   | { ok: true; user: AuthUser; next: string; developmentMode: boolean }
-  | { ok: false; reason: 'state-mismatch' | 'error' | 'network'; message: string; technical?: string };
+  | {
+      ok: false;
+      reason: 'state-mismatch' | 'pkce-expired' | 'error' | 'network' | 'invalid-callback';
+      message: string;
+      technical?: string;
+    };
 
 export interface StoredPkce {
   state: string;
   verifier: string;
+  /** Epoch ms when the flow started — used to reject stale/expired state. */
+  createdAt: number;
 }

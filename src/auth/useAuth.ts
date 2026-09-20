@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { AuthMode, AuthStatus, AuthUser } from './types';
+import { AuthError, AuthMode, AuthStatus, AuthUser } from './types';
 import { DemoCredentialCheck } from './logic';
 
 export interface AuthContextValue {
@@ -8,6 +8,8 @@ export interface AuthContextValue {
   developmentMode: boolean;
   /** Single source of truth: 'cognito' | 'demo' for active sessions, null when signed out. */
   authMode: AuthMode | null;
+  /** Explicit authentication failure (never contains tokens). Null when healthy. */
+  authError: AuthError | null;
   initializing: boolean;
   processingCallback: boolean;
   callbackError: string | null;

@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { resolveProtectedAccess } from './logic';
+import { resolveProtectedAccess, isSafeInternalPath } from './logic';
 import { useAuth } from './useAuth';
 
 /** Centered, calm full-screen status used while auth state resolves. */
@@ -26,20 +26,30 @@ export const AuthGateScreen: React.FC<{ message: string; detail?: string }> = ({
 );
 
 /**
- * Guards /app/* routes. Shows a loading screen while the session is restored,
- * and routes unauthenticated visitors through the sign-in flow (remembering
- * where they were headed).
+ * Guards /app/* routes.
+ * - While the session resolves we show a loading screen (never the dashboard).
+ * - Unauthenticated visitors are routed to the /login entry screen with a safe
+ *   internal `next` path (`/login?next=/app/...`). They are NOT redirected to
+ *   Cognito automatically — the /login screen offers both the real Cognito
+ *   option and the local development demo.
+ * - Authenticated users pass straight through without any re-auth redirect.
  */
 export const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { status, user, login } = useAuth();
+  const { status, user } = useAuth();
   const decision = resolveProtectedAccess(status, Boolean(user));
 
   useEffect(() => {
-    if (decision === 'redirect') {
-      const current = window.location.pathname;
-      login(current.startsWith('/app') ? current : `/app${current}`);
-    }
-  }, [decision, login]);
+    if (decision !== 'redirect') return;
+
+    const current = window.location.pathname;
+    const target = current.startsWith('/app') ? current : `/app${current}`;
+    const safeTarget = isSafeInternalPath(target) ? target : '/app';
+    const loginPath = `/login?next=${encodeURIComponent(safeTarget)}`;
+
+    if (window.location.pathname === '/login') return;
+    window.history.pushState({}, '', loginPath);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, [decision]);
 
   if (decision === 'loading' || status === 'loading') {
     return (
@@ -53,8 +63,8 @@ export const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ childr
   if (decision === 'redirect') {
     return (
       <AuthGateScreen
-        message="Signing you in…"
-        detail="You'll be asked to verify your identity before continuing to the dashboard."
+        message="Sign in required"
+        detail="The dashboard is only available to signed-in users."
       />
     );
   }

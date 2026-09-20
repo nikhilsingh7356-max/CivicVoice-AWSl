@@ -16,7 +16,7 @@ interface AuthCallbackPageProps {
  * performs the code exchange in this screen; we simply reflect its status.
  */
 export const AuthCallbackPage: React.FC<AuthCallbackPageProps> = ({ onNavigate }) => {
-  const { processingCallback, callbackError, status, user, login } = useAuth();
+  const { processingCallback, callbackError, authError, status, user } = useAuth();
 
   return (
     <div className="flex min-h-screen flex-col bg-cv-canvas">
@@ -44,14 +44,19 @@ export const AuthCallbackPage: React.FC<AuthCallbackPageProps> = ({ onNavigate }
                   <AlertTriangle size={20} />
                 </span>
                 <h1 className="mt-4 text-[1.3rem] font-semibold tracking-[-0.015em] text-navy-950">
-                  We couldn't sign you in. Please try again.
+                  We couldn't complete sign-in.
                 </h1>
                 <p className="subtitle mt-2 leading-relaxed">
-                  The sign-in expired or was interrupted. Nothing was lost — just try once more.
+                  {authError?.message ?? 'The sign-in was interrupted. Nothing was lost — try again.'}
                 </p>
+                {authError?.code === 'token-exchange-failed' && authError.detail ? (
+                  <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-left text-[12px] leading-relaxed text-red-700">
+                    {authError.detail}
+                  </p>
+                ) : null}
                 <div className="mt-6 flex flex-col gap-2">
-                  <button onClick={() => login()} className="btn btn-primary w-full">
-                    Sign in again
+                  <button onClick={() => onNavigate('/login')} className="btn btn-primary w-full">
+                    Back to log in
                     <ArrowRight size={14} aria-hidden="true" />
                   </button>
                   <button onClick={() => onNavigate('/')} className="btn btn-ghost w-full">
@@ -82,11 +87,11 @@ export const AuthCallbackPage: React.FC<AuthCallbackPageProps> = ({ onNavigate }
                   No sign-in in progress
                 </h1>
                 <p className="subtitle mt-2 leading-relaxed">
-                  You reached the authentication callback without an active request.
+                  You reached the authentication callback without an active request — it may have expired safely.
                 </p>
                 <div className="mt-6 flex flex-col gap-2">
-                  <button onClick={() => login()} className="btn btn-primary w-full">
-                    Start sign-in
+                  <button onClick={() => onNavigate('/login')} className="btn btn-primary w-full">
+                    Go to log in
                     <ArrowRight size={14} aria-hidden="true" />
                   </button>
                   <button onClick={() => onNavigate('/')} className="btn btn-ghost w-full">
