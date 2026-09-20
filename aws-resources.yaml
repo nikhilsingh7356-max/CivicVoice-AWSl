@@ -28,6 +28,15 @@ Parameters:
       Subdomain prefix for the Cognito hosted UI domain
       (<value>.auth.<region>.amazoncognito.com). Must be unique in the region.
 
+  FrontendAllowedOrigins:
+    Type: String
+    Default: https://main.d3b8da5vp73lda.amplifyapp.com
+    Description: >
+      Comma-separated list of origins allowed to call the CivicVoice API
+      (Access-Control-Allow-Origin). Served as the FRONTEND_ALLOWED_ORIGINS
+      env var to the Lambda. Localhost/127.0.0.1 origins are always allowed
+      for local development; OPTIONS preflight is handled inside the Lambda.
+
 Conditions:
 
   CreateAlertSubscription: !Not
@@ -290,6 +299,8 @@ Resources:
           BEDROCK_MODEL_ID: !Ref BedrockModelId
 
           EVENT_BUS_NAME: !Ref CivicVoiceEventBus
+
+          FRONTEND_ALLOWED_ORIGINS: !Ref FrontendAllowedOrigins
 
 
       # --------------------------------------------------------

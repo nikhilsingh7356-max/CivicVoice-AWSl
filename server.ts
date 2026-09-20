@@ -34,6 +34,52 @@ const transcribe = new TranscribeClient({ region: REGION });
 app.use(express.json({ limit: '8mb' }));
 app.use(express.urlencoded({ extended: true, limit: '12mb' }));
 
+// ---------------------------------------------------------------------------
+// CORS — ONE consistent layer.
+// The local Node server AND the production Lambda run this exact Express app
+// (lambda.ts wraps it with serverless-express; API Gateway REST proxy forwards
+// OPTIONS and actual requests straight to this instance). No CORS is enabled
+// at API Gateway, so there is a single source of truth: non-allowlisted
+// origins get no CORS headers; OPTIONS preflights short-circuit here; every
+// downstream response (200s, 4xx, 5xx) inherits the headers set on `res`.
+// ---------------------------------------------------------------------------
+const DEFAULT_FRONTEND_ORIGINS = 'https://main.d3b8da5vp73lda.amplifyapp.com';
+
+function frontendAllowedOrigins(): ReadonlySet<string> {
+  return new Set(
+    (process.env.FRONTEND_ALLOWED_ORIGINS || DEFAULT_FRONTEND_ORIGINS)
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean)
+  );
+}
+
+function isAllowedCorsOrigin(origin: string | undefined): boolean {
+  if (!origin) return false;
+  if (frontendAllowedOrigins().has(origin)) return true;
+  try {
+    const url = new URL(origin);
+    return url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1');
+  } catch {
+    return false;
+  }
+}
+
+app.use((req, res, next) => {
+  if (isAllowedCorsOrigin(req.headers.origin)) {
+    res.setHeader('Access-Control-Allow-Origin', req.headers.origin as string);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, Origin');
+  }
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Max-Age', '86400');
+    res.status(204).end();
+    return;
+  }
+  next();
+});
+
 // Request correlation id + structured request logging (no raw bodies are ever logged).
 app.use((req, res, next) => {
   const requestId = (req.headers['x-request-id'] as string) || generateRequestId();
