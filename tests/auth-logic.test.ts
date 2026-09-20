@@ -7,6 +7,7 @@ import {
   computeSessionExpiry,
   createDevelopmentSession,
   decodeJwtPayload,
+  DEMO_ACCOUNTS,
   generatePkce,
   getUserFromIdToken,
   isSessionExpired,
@@ -15,6 +16,7 @@ import {
   randomBase64Url,
   resolveProtectedAccess,
   statesMatch,
+  validateDemoCredentials,
 } from '../src/auth/logic.ts';
 import { AuthConfig } from '../src/auth/types.ts';
 
@@ -230,6 +232,55 @@ describe('auth logic — route protection decision', () => {
   test('resolveProtectedAccess redirects unauthenticated visitors', () => {
     assert.equal(resolveProtectedAccess('unauthenticated', false), 'redirect');
     assert.equal(resolveProtectedAccess('authenticated', false), 'redirect');
+  });
+});
+
+describe('auth logic — demo credentials', () => {
+  test('demo accounts ship with a primary operations and a field-officer account', () => {
+    assert.ok(DEMO_ACCOUNTS.length >= 2);
+    assert.equal(DEMO_ACCOUNTS[0].id, 'dev-user');
+    assert.ok(DEMO_ACCOUNTS[0].password.length >= 8);
+  });
+
+  test('validateDemoCredentials accepts the operations account (case-insensitive email)', () => {
+    const checked = validateDemoCredentials('  OPERATIONS@civicvoice.local ', DEMO_ACCOUNTS[0].password);
+    assert.equal(checked.ok, true);
+    if (checked.ok) {
+      assert.equal(checked.account.id, 'dev-user');
+      assert.deepEqual(checked.account.groups, ['ADMIN', 'AUTHORITY']);
+    }
+  });
+
+  test('validateDemoCredentials accepts the field-officer account', () => {
+    const checked = validateDemoCredentials(DEMO_ACCOUNTS[1].email, DEMO_ACCOUNTS[1].password);
+    assert.equal(checked.ok, true);
+    if (checked.ok) {
+      assert.equal(checked.account.id, 'dev-officer');
+      assert.deepEqual(checked.account.groups, ['FIELD_OFFICER']);
+    }
+  });
+
+  test('validateDemoCredentials rejects a wrong password', () => {
+    const checked = validateDemoCredentials(DEMO_ACCOUNTS[0].email, 'not-the-password');
+    assert.equal(checked.ok, false);
+    if (!checked.ok) assert.match(checked.message, /demo credentials/i);
+  });
+
+  test('validateDemoCredentials rejects an unknown email', () => {
+    const checked = validateDemoCredentials('nobody@civicvoice.local', DEMO_ACCOUNTS[0].password);
+    assert.equal(checked.ok, false);
+  });
+
+  test('validateDemoCredentials reports missing fields', () => {
+    assert.equal(validateDemoCredentials('', 'x').ok, false);
+    assert.equal(validateDemoCredentials('a@b.co', '').ok, false);
+  });
+
+  test('createDevelopmentSession can target a specific demo account', () => {
+    const session = createDevelopmentSession(1_700_000_000_000, DEMO_ACCOUNTS[1]);
+    assert.equal(session.user.id, 'dev-officer');
+    assert.deepEqual(session.user.groups, ['FIELD_OFFICER']);
+    assert.equal(session.user.developmentMode, true);
   });
 });
 

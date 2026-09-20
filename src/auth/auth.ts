@@ -9,6 +9,7 @@ import {
   buildSessionFromTokens,
   generatePkce,
   createDevelopmentSession,
+  DemoAccount,
   isSessionExpired,
   isStoredSession,
   parseCallbackParams,
@@ -57,6 +58,13 @@ export function readStoredSession(storage: StorageLike, nowMs: number): AuthSess
 /** Persist a session (used by dev mode + restore after refresh). */
 export function writeStoredSession(storage: StorageLike, session: AuthSession): void {
   storage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+}
+
+/** Persist a validated development-mode session for the given demo account. */
+export function writeDemoSession(storage: StorageLike, account: DemoAccount, nowMs: number): AuthSession {
+  const session = createDevelopmentSession(nowMs, account);
+  writeStoredSession(storage, session);
+  return session;
 }
 
 /** Clear every auth-related storage entry used by this session. */

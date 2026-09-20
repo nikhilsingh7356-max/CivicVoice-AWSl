@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import { AuthStatus, AuthUser } from './types';
+import { DemoCredentialCheck } from './logic';
 
 export interface AuthContextValue {
   status: AuthStatus;
@@ -10,6 +11,8 @@ export interface AuthContextValue {
   callbackError: string | null;
   login: (next?: string) => void;
   signup: (next?: string) => void;
+  /** Development mode only: validate demo credentials and open a simulated session. */
+  loginWithDemo: (email: string, password: string) => DemoCredentialCheck;
   logout: () => void;
 }
 

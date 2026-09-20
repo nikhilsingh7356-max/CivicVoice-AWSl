@@ -27,6 +27,64 @@ export const DEFAULT_DEV_USER_ID = 'dev-user';
 export const DEFAULT_DEV_EMAIL = 'operations@civicvoice.local';
 export const DEFAULT_DEV_NAME = 'CivicVoice Operations';
 
+/** A local, simulated account usable only when Cognito isn't configured. */
+export interface DemoAccount {
+  id: string;
+  email: string;
+  password: string;
+  name: string;
+  username: string;
+  groups?: string[];
+  roleHint?: string;
+}
+
+/** Credentials accepted by the development-mode sign-in form. */
+export const DEMO_ACCOUNTS: readonly DemoAccount[] = [
+  {
+    id: DEFAULT_DEV_USER_ID,
+    email: DEFAULT_DEV_EMAIL,
+    password: 'CivicVoice!2026',
+    name: DEFAULT_DEV_NAME,
+    username: 'operations-console',
+    groups: ['ADMIN', 'AUTHORITY'],
+    roleHint: 'civicvoice-operations',
+  },
+  {
+    id: 'dev-officer',
+    email: 'officer.priya@civicvoice.local',
+    password: 'CivicVoice!2026',
+    name: 'Priya Sharma (Demo Officer)',
+    username: 'field-officer-priya',
+    groups: ['FIELD_OFFICER'],
+    roleHint: 'field-officer',
+  },
+];
+
+export type DemoCredentialCheck =
+  | { ok: true; account: DemoAccount }
+  | { ok: false; message: string };
+
+/** Validate the development-mode demo credentials (email is case-insensitive). */
+export function validateDemoCredentials(email: string, password: string): DemoCredentialCheck {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) {
+    return { ok: false, message: 'Enter your email address.' };
+  }
+  if (!password) {
+    return { ok: false, message: 'Enter your password.' };
+  }
+  const account = DEMO_ACCOUNTS.find(
+    (a) => a.email.toLowerCase() === normalizedEmail && a.password === password
+  );
+  if (!account) {
+    return {
+      ok: false,
+      message: "That email and password don't match a demo account. Use the demo credentials below.",
+    };
+  }
+  return { ok: true, account };
+}
+
 /** 60s of skew / slack when deciding whether a token needs refreshing. */
 export const TOKEN_SKEW_MS = 60_000;
 
@@ -182,14 +240,16 @@ export function resolveProtectedAccess(status: AuthStatus, hasUser: boolean): 'l
 }
 
 /** Build the clearly-labeled development-mode session used when Cognito is not configured. */
-export function createDevelopmentSession(nowMs: number): AuthSession {
+export function createDevelopmentSession(nowMs: number, account: DemoAccount = DEMO_ACCOUNTS[0]): AuthSession {
   const idToken = 'dev.id.token';
   return {
     user: {
-      id: DEFAULT_DEV_USER_ID,
-      email: DEFAULT_DEV_EMAIL,
-      name: DEFAULT_DEV_NAME,
-      username: 'operations-console',
+      id: account.id,
+      email: account.email,
+      name: account.name,
+      username: account.username,
+      groups: account.groups,
+      roleHint: account.roleHint,
       developmentMode: true,
     },
     accessToken: 'dev.access.token',

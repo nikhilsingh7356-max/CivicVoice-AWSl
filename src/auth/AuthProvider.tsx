@@ -7,12 +7,19 @@ import {
   readStoredSession,
   restoreSession,
   signOut,
+  writeDemoSession,
 } from './auth';
 import { AuthContext, AuthContextValue } from './useAuth';
+import { validateDemoCredentials } from './logic';
 import { useToast } from '../components/ui/Toast';
 
 function isCallbackRoute(pathname: string): boolean {
   return pathname === '/auth/callback';
+}
+
+function buildEntryUrl(mode: 'login' | 'signup', next?: string): string {
+  const path = mode === 'signup' ? '/signup' : '/login';
+  return next && next.startsWith('/') ? `${path}?next=${encodeURIComponent(next)}` : path;
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -76,6 +83,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const user = session?.user ?? null;
 
     const login = (next?: string) => {
+      if (!authConfig.configured) {
+        window.location.assign(buildEntryUrl('login', next));
+        return;
+      }
       void initiateSignIn(authConfig, 'login', {
         storage: window.sessionStorage,
         win: window,
@@ -89,6 +100,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const signup = (next?: string) => {
+      if (!authConfig.configured) {
+        window.location.assign(buildEntryUrl('signup', next));
+        return;
+      }
       void initiateSignIn(authConfig, 'signup', {
         storage: window.sessionStorage,
         win: window,
@@ -99,6 +114,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           notify('error', 'Unable to connect to CivicVoice.');
         }
       });
+    };
+
+    const loginWithDemo = (email: string, password: string) => {
+      const checked = validateDemoCredentials(email, password);
+      if (checked.ok) {
+        const session = writeDemoSession(window.sessionStorage, checked.account, Date.now());
+        setSession(session);
+        setStatus('authenticated');
+      }
+      return checked;
     };
 
     const logout = () => {
@@ -124,6 +149,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       callbackError,
       login,
       signup,
+      loginWithDemo,
       logout,
     };
   }, [status, session, processingCallback, callbackError, notify]);
