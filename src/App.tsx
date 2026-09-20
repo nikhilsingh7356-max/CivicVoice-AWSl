@@ -2,6 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { CivicCase, CaseStatus } from './types';
 import { INITIAL_DEMO_CASES } from './demoData';
 import { AppShell, ApiStatus } from './components/ui/AppShell';
+import { ProtectedRoute } from './auth/ProtectedRoute';
+import HomePage from './pages/HomePage';
+import { AuthEntryPage } from './pages/AuthEntryPage';
+import { AuthCallbackPage } from './pages/AuthCallbackPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { CasesPage } from './pages/CasesPage';
 import { CaseDetailPage } from './pages/CaseDetailPage';
@@ -11,6 +15,18 @@ import { AnalyticsPage } from './pages/AnalyticsPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { PolicyPlanningPage } from './pages/PolicyPlanningPage';
 import { useToast } from './components/ui/Toast';
+
+/** Root prefixes that belong to the authenticated operations area. */
+const APP_PREFIXES = ['/app', '/cases', '/report', '/map', '/analytics', '/notifications', '/policy', '/planning', '/citizen'];
+
+function isAppArea(path: string): boolean {
+  return APP_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+}
+
+/** Map a legacy top-level path (e.g. /cases/AB-1) onto /app/*. */
+function toAppPath(path: string): string {
+  return path.startsWith('/app') ? path : `/app${path}`;
+}
 
 export function App() {
   const [currentPath, setCurrentPath] = useState<string>(() => {
@@ -22,7 +38,7 @@ export function App() {
 
   const navigate = useCallback((path: string) => {
     window.history.pushState({}, '', path);
-    setCurrentPath(path);
+    setCurrentPath(path.replace(/#.*$/, ''));
     window.scrollTo({ top: 0 });
   }, []);
 
@@ -104,85 +120,106 @@ export function App() {
 
   const handleSelectCase = useCallback(
     (caseId: string) => {
-      navigate(`/cases/${caseId}`);
+      navigate(`/app/cases/${caseId}`);
     },
     [navigate]
   );
 
-  const isCaseDetailRoute = currentPath.startsWith('/cases/');
-  const currentCase = isCaseDetailRoute
-    ? cases.find((c) => c.case_id === currentPath.replace('/cases/', ''))
-    : undefined;
+  const appActive = isAppArea(currentPath);
 
-  let pageContent: React.ReactNode = null;
-
-  if (isCaseDetailRoute) {
-    if (currentCase) {
-      pageContent = (
-        <CaseDetailPage
-          civicCase={currentCase}
-          onBack={() => navigate('/cases')}
-          onUpdateStatus={handleUpdateStatus}
-          onCaseModified={handleCaseModified}
-          onNavigate={navigate}
-        />
-      );
-    } else {
-      pageContent = (
-        <div className="max-w-3xl">
-          <h1 className="page-title">Case not found</h1>
-          <p className="subtitle mt-2">
-            We could not find a case matching this identifier in the current dataset.
-          </p>
-          <button onClick={() => navigate('/cases')} className="btn btn-secondary mt-5">
-            Back to cases
-          </button>
-        </div>
-      );
-    }
-  } else if (currentPath === '/report' || currentPath === '/citizen') {
-    pageContent = (
-      <ReportIssuePage onCaseCreated={handleCaseCreated} onNavigate={navigate} />
-    );
-  } else if (currentPath.startsWith('/analytics')) {
-    pageContent = (
-      <AnalyticsPage cases={cases} onSelectCase={handleSelectCase} onNavigate={navigate} />
-    );
-  } else if (currentPath.startsWith('/notifications')) {
-    pageContent = (
-      <NotificationsPage cases={cases} onSelectCase={handleSelectCase} onNavigate={navigate} />
-    );
-  } else if (currentPath.startsWith('/map')) {
-    pageContent = <MapPage cases={cases} onSelectCase={handleSelectCase} />;
-  } else if (currentPath.startsWith('/cases')) {
-    pageContent = (
-      <CasesPage
-        cases={cases}
-        onSelectCase={handleSelectCase}
-        apiStatus={apiStatus}
-        onRefresh={() => fetchCases()}
-      />
-    );
-  } else if (currentPath.startsWith('/policy') || currentPath.startsWith('/planning')) {
-    pageContent = (
-      <PolicyPlanningPage cases={cases} onNavigate={navigate} onCaseCreated={handleCaseCreated} />
-    );
+  let publicContent: React.ReactNode = null;
+  if (currentPath === '/auth/callback') {
+    publicContent = <AuthCallbackPage onNavigate={navigate} />;
+  } else if (currentPath === '/login') {
+    publicContent = <AuthEntryPage mode="login" onNavigate={navigate} />;
+  } else if (currentPath === '/signup') {
+    publicContent = <AuthEntryPage mode="signup" onNavigate={navigate} />;
   } else {
-    pageContent = (
-      <OverviewPage
-        cases={cases}
-        apiStatus={apiStatus}
-        onSelectCase={handleSelectCase}
-        onNavigate={navigate}
-        onRefresh={() => fetchCases()}
-      />
-    );
+    publicContent = <HomePage onNavigate={navigate} />;
   }
 
+  let appContent: React.ReactNode = null;
+  if (appActive) {
+    const appPath = toAppPath(currentPath);
+    const isCaseDetailRoute = appPath.startsWith('/app/cases/');
+    const currentCase = isCaseDetailRoute
+      ? cases.find((c) => c.case_id === appPath.replace('/app/cases/', ''))
+      : undefined;
+
+    if (isCaseDetailRoute) {
+      if (currentCase) {
+        appContent = (
+          <CaseDetailPage
+            civicCase={currentCase}
+            onBack={() => navigate('/app/cases')}
+            onUpdateStatus={handleUpdateStatus}
+            onCaseModified={handleCaseModified}
+            onNavigate={navigate}
+          />
+        );
+      } else {
+        appContent = (
+          <div className="max-w-3xl">
+            <h1 className="page-title">Case not found</h1>
+            <p className="subtitle mt-2">
+              We could not find a case matching this identifier in the current dataset.
+            </p>
+            <button onClick={() => navigate('/app/cases')} className="btn btn-secondary mt-5">
+              Back to cases
+            </button>
+          </div>
+        );
+      }
+    } else if (appPath === '/app/report' || appPath === '/app/citizen') {
+      appContent = <ReportIssuePage onCaseCreated={handleCaseCreated} onNavigate={navigate} />;
+    } else if (appPath.startsWith('/app/analytics')) {
+      appContent = (
+        <AnalyticsPage cases={cases} onSelectCase={handleSelectCase} onNavigate={navigate} />
+      );
+    } else if (appPath.startsWith('/app/notifications')) {
+      appContent = (
+        <NotificationsPage cases={cases} onSelectCase={handleSelectCase} onNavigate={navigate} />
+      );
+    } else if (appPath.startsWith('/app/map')) {
+      appContent = <MapPage cases={cases} onSelectCase={handleSelectCase} />;
+    } else if (appPath.startsWith('/app/cases')) {
+      appContent = (
+        <CasesPage
+          cases={cases}
+          onSelectCase={handleSelectCase}
+          apiStatus={apiStatus}
+          onRefresh={() => fetchCases()}
+        />
+      );
+    } else if (appPath.startsWith('/app/policy') || appPath.startsWith('/app/planning')) {
+      appContent = (
+        <PolicyPlanningPage cases={cases} onNavigate={navigate} onCaseCreated={handleCaseCreated} />
+      );
+    } else {
+      appContent = (
+        <OverviewPage
+          cases={cases}
+          apiStatus={apiStatus}
+          onSelectCase={handleSelectCase}
+          onNavigate={navigate}
+          onRefresh={() => fetchCases()}
+        />
+      );
+    }
+  }
+
+  if (!appActive) {
+    return publicContent;
+  }
+
+  const appPath = toAppPath(currentPath);
+
   return (
-    <AppShell path={currentPath} onNavigate={navigate} apiStatus={apiStatus}>
-      {pageContent}
-    </AppShell>
+    <ProtectedRoute>
+      <AppShell path={appPath} onNavigate={navigate} apiStatus={apiStatus}>
+        {appContent}
+      </AppShell>
+    </ProtectedRoute>
   );
 }
 

@@ -13,6 +13,21 @@ Parameters:
     Type: String
     Default: ''
 
+  FrontendUrl:
+    Type: String
+    Default: http://localhost:3000
+    Description: >
+      Public URL of the CivicVoice SPA. The Cognito app client will accept
+      <FrontendUrl>/auth/callback as its OAuth callback and <FrontendUrl>
+      as its logout URL.
+
+  CognitoDomainName:
+    Type: String
+    Default: civicvoice-auth
+    Description: >
+      Subdomain prefix for the Cognito hosted UI domain
+      (<value>.auth.<region>.amazoncognito.com). Must be unique in the region.
+
 Conditions:
 
   CreateAlertSubscription: !Not
@@ -440,6 +455,95 @@ Resources:
       TreatMissingData: notBreaching
 
 
+  # ============================================================
+  # COGNITO - USER POOL (AUTHENTICATION)
+  # ============================================================
+
+  CivicVoiceUserPool:
+    Type: AWS::Cognito::UserPool
+
+    Properties:
+      UserPoolName: civicvoice-users
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      MfaConfiguration: OFF
+
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+        - Name: name
+          AttributeDataType: String
+          Required: false
+          Mutable: true
+
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+        UnusedAccountValidityDays: 7
+
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+
+      UserAttributeUpdateSettings:
+        AttributesRequireVerificationBeforeUpdate:
+          - email
+
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+
+
+  # ------------------------------------------------------------
+  # APP CLIENT - PUBLIC SPA (HOSTED UI + PKCE, no secret)
+  # ------------------------------------------------------------
+
+  CivicVoiceUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+
+    Properties:
+      UserPoolId: !Ref CivicVoiceUserPool
+      ClientName: civicvoice-web
+      GenerateSecret: false
+      RefreshTokenValidity: 30
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      SupportedIdentityProviders:
+        - COGNITO
+      CallbackURLs:
+        - !Sub '${FrontendUrl}/auth/callback'
+      LogoutURLs:
+        - !Ref FrontendUrl
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - email
+        - openid
+        - profile
+
+
+  # ------------------------------------------------------------
+  # HOSTED UI DOMAIN
+  # ------------------------------------------------------------
+
+  CivicVoiceUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+
+    Properties:
+      Domain: !Ref CognitoDomainName
+      UserPoolId: !Ref CivicVoiceUserPool
+
+
 # ==============================================================
 # OUTPUTS
 # ==============================================================
@@ -530,3 +634,39 @@ Outputs:
       SNS topic for critical CivicVoice officer alerts
 
     Value: !Ref CivicVoiceSnsTopic
+
+
+  # ------------------------------------------------------------
+  # COGNITO USER POOL
+  # ------------------------------------------------------------
+
+  CivicVoiceUserPoolId:
+
+    Description: >
+      ID of the CivicVoice Cognito user pool (for VITE_COGNITO_USER_POOL_ID)
+
+    Value: !Ref CivicVoiceUserPool
+
+
+  # ------------------------------------------------------------
+  # COGNITO APP CLIENT
+  # ------------------------------------------------------------
+
+  CivicVoiceUserPoolClientId:
+
+    Description: >
+      App client ID for the CivicVoice web app (for VITE_COGNITO_CLIENT_ID)
+
+    Value: !Ref CivicVoiceUserPoolClient
+
+
+  # ------------------------------------------------------------
+  # COGNITO HOSTED UI DOMAIN
+  # ------------------------------------------------------------
+
+  CivicVoiceHostedUIDomain:
+
+    Description: >
+      Full Cognito hosted UI domain (for VITE_COGNITO_DOMAIN)
+
+    Value: !Sub '${CognitoDomainName}.auth.${AWS::Region}.amazoncognito.com'

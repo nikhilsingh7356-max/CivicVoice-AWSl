@@ -3,6 +3,7 @@ import { BedrockAnalysisResult, CivicCase } from '../types';
 import { PriorityBadge, CategoryBadge } from '../components/StatusBadge';
 import { Panel } from '../components/ui/Panel';
 import { useToast } from '../components/ui/Toast';
+import { useAuth } from '../auth/useAuth';
 import {
   Upload,
   MapPin,
@@ -51,12 +52,13 @@ const STEP_LABELS = ['Describe', 'Location', 'Evidence', 'Review'];
 
 export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({ onCaseCreated, onNavigate }) => {
   const { notify } = useToast();
+  const { user, developmentMode } = useAuth();
 
   const [step, setStep] = useState(0);
 
-  // Citizen details
-  const [citizenName, setCitizenName] = useState('');
-  const [citizenContact, setCitizenContact] = useState('');
+  // Citizen details — prefilled from the signed-in profile; editable.
+  const [citizenName, setCitizenName] = useState(user?.name ?? '');
+  const [citizenContact, setCitizenContact] = useState(user?.email ?? '');
 
   // Complaint
   const [complaint, setComplaint] = useState('');
@@ -360,6 +362,12 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({ onCaseCreated,
                 </div>
               </div>
             </div>
+            <p className="meta flex items-center gap-1.5">
+              <ShieldCheck size={12} className="shrink-0 text-pine-600" aria-hidden="true" />
+              {developmentMode
+                ? 'Development session active — reporter details default to your local session.'
+                : `Signed in as ${user?.email ?? 'you'} · reporter details default to your profile and remain editable.`}
+            </p>
 
             <div>
               <div className="mb-1.5 flex items-center justify-between gap-3">

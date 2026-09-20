@@ -6,10 +6,13 @@ import {
   Landmark,
   Layers,
   LayoutDashboard,
+  LogOut,
   MapPin,
+  Plus,
   ShieldCheck,
   X,
 } from 'lucide-react';
+import { useAuth } from '../../auth/useAuth';
 
 export type ApiStatus = 'connecting' | 'connected' | 'offline-demo';
 
@@ -22,15 +25,16 @@ interface NavItem {
 }
 
 const PRIMARY: NavItem[] = [
-  { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={16} aria-hidden="true" />, path: '/' },
-  { id: 'cases', label: 'Cases', icon: <ClipboardList size={16} aria-hidden="true" />, path: '/cases' },
-  { id: 'map', label: 'Map', icon: <MapPin size={16} aria-hidden="true" />, path: '/map' },
-  { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={16} aria-hidden="true" />, path: '/analytics' },
-  { id: 'notifications', label: 'Notifications', icon: <Bell size={16} aria-hidden="true" />, path: '/notifications' },
+  { id: 'overview', label: 'Overview', icon: <LayoutDashboard size={16} aria-hidden="true" />, path: '/app' },
+  { id: 'cases', label: 'Cases', icon: <ClipboardList size={16} aria-hidden="true" />, path: '/app/cases' },
+  { id: 'report', label: 'Report issue', icon: <Plus size={16} aria-hidden="true" />, path: '/app/report' },
+  { id: 'map', label: 'Map', icon: <MapPin size={16} aria-hidden="true" />, path: '/app/map' },
+  { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={16} aria-hidden="true" />, path: '/app/analytics' },
+  { id: 'notifications', label: 'Notifications', icon: <Bell size={16} aria-hidden="true" />, path: '/app/notifications' },
 ];
 
 const SECONDARY: NavItem[] = [
-  { id: 'policy', label: 'Policy & planning', icon: <Layers size={16} aria-hidden="true" />, path: '/policy', badge: 'synthetic' },
+  { id: 'policy', label: 'Policy & planning', icon: <Layers size={16} aria-hidden="true" />, path: '/app/policy', badge: 'synthetic' },
 ];
 
 interface SidebarProps {
@@ -47,7 +51,14 @@ const STATUS_LABELS: Record<ApiStatus, { label: string; dot: string }> = {
   'offline-demo': { label: 'Offline — demo data', dot: 'bg-amber-400' },
 };
 
+function initialsOf(name: string | undefined, email: string | undefined): string {
+  const source = name?.trim() || email || 'OP';
+  const parts = source.split(/[\s@._-]+/).filter(Boolean);
+  return (parts[0]?.[0] ?? 'O').toUpperCase() + (parts[1]?.[0]?.toUpperCase() ?? parts[0]?.[1]?.toUpperCase() ?? 'P');
+}
+
 export const Sidebar: React.FC<SidebarProps> = ({ path, onNavigate, open, onClose, apiStatus }) => {
+  const { user, developmentMode, logout } = useAuth();
   const active = (item: NavItem) =>
     item.path === '/' ? path === '/' : path === item.path || path.startsWith(`${item.path}/`);
 
@@ -77,6 +88,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ path, onNavigate, open, onClos
     </button>
   );
 
+  const displayName = user?.name || 'Operations console';
+  const displayEmail = developmentMode ? 'Development session' : (user?.email || 'Signed in');
+
   return (
     <>
       {open && (
@@ -96,7 +110,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ path, onNavigate, open, onClos
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-navy-800 px-4">
           <button
             onClick={() => {
-              onNavigate('/');
+              onNavigate('/app');
               onClose();
             }}
             className="flex items-center gap-2.5"
@@ -131,19 +145,36 @@ export const Sidebar: React.FC<SidebarProps> = ({ path, onNavigate, open, onClos
               <span className={`dot ${STATUS_LABELS[apiStatus].dot}`} aria-hidden="true" />
               <span className="text-[12px] text-navy-200">{STATUS_LABELS[apiStatus].label}</span>
             </div>
+            {user?.groups && user.groups.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {user.groups.map((g) => (
+                  <span key={g} className="rounded-sm bg-navy-800 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-navy-300">
+                    {g}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </nav>
 
         {/* Profile footer */}
         <div className="shrink-0 border-t border-navy-800 px-3 py-3">
           <div className="flex items-center gap-2.5 rounded-md px-1.5 py-1.5">
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-navy-700 text-[11px] font-semibold text-white">
-              OP
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-navy-700 text-[11px] font-semibold text-white">
+              {initialsOf(user?.name, user?.email)}
             </span>
-            <div className="min-w-0">
-              <p className="truncate text-[12px] font-medium text-navy-100">Operations console</p>
-              <p className="text-[10.5px] text-navy-400">Local session</p>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[12px] font-medium text-navy-100">{displayName}</p>
+              <p className="truncate text-[10.5px] text-navy-400">{displayEmail}</p>
             </div>
+            <button
+              onClick={logout}
+              className="rounded p-1.5 text-navy-400 hover:bg-navy-800 hover:text-navy-100"
+              title="Sign out"
+              aria-label="Sign out"
+            >
+              <LogOut size={15} aria-hidden="true" />
+            </button>
           </div>
         </div>
       </aside>
