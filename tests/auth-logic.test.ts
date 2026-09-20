@@ -8,17 +8,22 @@ import {
   createDevelopmentSession,
   decodeJwtPayload,
   DEMO_ACCOUNTS,
+  deriveAuthMode,
   generatePkce,
   getUserFromIdToken,
+  isSafeInternalPath,
   isSessionExpired,
   isStoredSession,
   parseCallbackParams,
   randomBase64Url,
+  resolveCaseSource,
   resolveProtectedAccess,
   statesMatch,
   validateDemoCredentials,
 } from '../src/auth/logic.ts';
-import { AuthConfig } from '../src/auth/types.ts';
+import { signOut } from '../src/auth/auth.ts';
+import { AuthConfig, AuthUser } from '../src/auth/types.ts';
+import { NEXT_PATH_KEY, PKCE_STORAGE_KEY, SESSION_STORAGE_KEY } from '../src/auth/logic.ts';
 
 const CONFIG: AuthConfig = {
   userPoolId: 'ap-south-1_AbCdEf12',
@@ -293,5 +298,112 @@ describe('auth logic — no browser globals leak', () => {
     // If this module accidentally referenced `window` at import time, the
     // suite would not reach this test.
     assert.ok(true);
+  });
+});
+
+describe('auth logic — session auth mode', () => {
+  const realUser: AuthUser = { id: 'u-9', email: 'priya@example.com', developmentMode: false };
+  const devUser: AuthUser = { id: 'dev-user', email: 'operations@civicvoice.local', developmentMode: true };
+
+  test('deriveAuthMode maps signed-out sessions to null', () => {
+    assert.equal(deriveAuthMode('loading', null), null);
+    assert.equal(deriveAuthMode('unauthenticated', null), null);
+    assert.equal(deriveAuthMode('authenticated', null), null);
+  });
+
+  test('deriveAuthMode maps a real session to cognito', () => {
+    assert.equal(deriveAuthMode('authenticated', realUser), 'cognito');
+  });
+
+  test('deriveAuthMode maps a development session to demo', () => {
+    assert.equal(deriveAuthMode('authenticated', devUser), 'demo');
+  });
+});
+
+describe('auth logic — case data source selection', () => {
+  test('demo sessions resolve to the deterministic local dataset', () => {
+    assert.equal(resolveCaseSource('demo'), 'demo');
+  });
+
+  test('cognito sessions resolve to the live backend', () => {
+    assert.equal(resolveCaseSource('cognito'), 'backend');
+  });
+
+  test('signed-out sessions resolve to no source', () => {
+    assert.equal(resolveCaseSource(null), 'none');
+  });
+});
+
+describe('auth logic — internal path safety', () => {
+  test('isSafeInternalPath accepts normal app paths', () => {
+    assert.equal(isSafeInternalPath('/app'), true);
+    assert.equal(isSafeInternalPath('/app/cases/CV-2026-001'), true);
+    assert.equal(isSafeInternalPath('/app/report'), true);
+  });
+
+  test('isSafeInternalPath rejects external, protocol-relative and newline paths', () => {
+    assert.equal(isSafeInternalPath('/'), false);
+    assert.equal(isSafeInternalPath(''), false);
+    assert.equal(isSafeInternalPath(null), false);
+    assert.equal(isSafeInternalPath(undefined), false);
+    assert.equal(isSafeInternalPath('https://evil.example.com'), false);
+    assert.equal(isSafeInternalPath('//evil.example.com/steal'), false);
+    assert.equal(isSafeInternalPath('/app\njavascript:alert(1)'), false);
+  });
+});
+
+describe('auth logic — sign out', () => {
+  function storageWith(fixtures: Record<string, string>) {
+    const store: Record<string, string> = { ...fixtures };
+    return {
+      getItem: (key: string) => store[key] ?? null,
+      setItem: (key: string, value: string) => {
+        store[key] = value;
+      },
+      removeItem: (key: string) => {
+        delete store[key];
+      },
+      store,
+    };
+  }
+
+  const seeded = {
+    [SESSION_STORAGE_KEY]: JSON.stringify({ user: { id: 'u', developmentMode: false }, accessToken: 'a', idToken: 'i', expiresAt: 1 }),
+    [PKCE_STORAGE_KEY]: '{"state":"s","verifier":"v"}',
+    [NEXT_PATH_KEY]: '/app/cases',
+  };
+
+  test('signOut with Cognito configured returns a logout URL whose logout_uri has no trailing slash', () => {
+    const storage = storageWith(seeded);
+    const result = signOut(CONFIG, { storage, origin: 'http://localhost:3000' });
+    assert.equal(result.dev, false);
+    assert.ok(result.url);
+    const params = new URLSearchParams(result.url!.split('?')[1]);
+    assert.equal(params.get('client_id'), CONFIG.clientId);
+    assert.equal(params.get('logout_uri'), 'http://localhost:3000');
+  });
+
+  test('signOut trims a trailing slash from the origin before building logout_uri', () => {
+    const storage = storageWith(seeded);
+    const result = signOut(CONFIG, { storage, origin: 'http://localhost:3000/' });
+    assert.equal(result.dev, false);
+    const params = new URLSearchParams(result.url!.split('?')[1]);
+    assert.equal(params.get('logout_uri'), 'http://localhost:3000');
+  });
+
+  test('signOut clears every auth-related storage key before redirecting', () => {
+    const storage = storageWith(seeded);
+    signOut(CONFIG, { storage, origin: 'http://localhost:3000' });
+    assert.equal(storage.getItem(SESSION_STORAGE_KEY), null);
+    assert.equal(storage.getItem(PKCE_STORAGE_KEY), null);
+    assert.equal(storage.getItem(NEXT_PATH_KEY), null);
+  });
+
+  test('signOut without Cognito configured reports dev-only cleanup', () => {
+    const storage = storageWith(seeded);
+    const result = signOut({ ...CONFIG, configured: false }, { storage, origin: 'http://localhost:3000' });
+    assert.equal(result.dev, true);
+    assert.equal(result.url, undefined);
+    assert.equal(storage.getItem(SESSION_STORAGE_KEY), null);
   });
 });

@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { Plus, RefreshCw, ArrowRight } from 'lucide-react';
 import { CivicCase, CivicPriority, CaseStatus } from '../types';
+import { useAuth } from '../auth/useAuth';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
 import { BarRows } from '../components/ui/Charts';
@@ -51,6 +52,7 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
   onNavigate,
   onRefresh,
 }) => {
+  const { authMode } = useAuth();
   const stats = useMemo(() => {
     const open = cases.filter((c) => isOpenStatus(c.status));
     const urgent = open.filter((c) => c.priority === 'HIGH' || c.priority === 'CRITICAL');
@@ -112,10 +114,17 @@ export const OverviewPage: React.FC<OverviewPageProps> = ({
       {apiStatus === 'offline-demo' && (
         <div className="mb-5 flex items-center gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
           <span className="dot bg-amber-500" aria-hidden="true" />
-          <p className="text-[13px] text-amber-900">
-            Backend is unreachable — the console is showing sample (<span className="font-semibold">demo</span>) records
-            to keep the interface usable. Refresh once the API is available.
-          </p>
+          {authMode === 'demo' ? (
+            <p className="text-[13px] text-amber-900">
+              Development demo — this dashboard shows deterministic sample (<span className="font-semibold">demo</span>)
+              records from the local session. Sign out to use the live backend.
+            </p>
+          ) : (
+            <p className="text-[13px] text-amber-900">
+              Backend is unreachable — the console is showing sample (<span className="font-semibold">demo</span>) records
+              to keep the interface usable. Refresh once the API is available.
+            </p>
+          )}
         </div>
       )}
 

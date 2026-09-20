@@ -9,9 +9,11 @@ import {
   buildSessionFromTokens,
   generatePkce,
   createDevelopmentSession,
+  DEMO_ACCOUNTS,
   DemoAccount,
   isSessionExpired,
   isStoredSession,
+  isSafeInternalPath,
   parseCallbackParams,
   serializePkce,
   shouldRefresh,
@@ -199,7 +201,8 @@ export async function completeSignIn(
   const fetcher: FetchLike = input.fetcher ?? ((...args) => fetch(...args));
   const params = parseCallbackParams(search.replace(/^\?/, ''));
 
-  const devNext = storage.getItem(NEXT_PATH_KEY) ?? '/app';
+  const devNextRaw = storage.getItem(NEXT_PATH_KEY) ?? '/app';
+  const devNext = isSafeInternalPath(devNextRaw) ? devNextRaw : '/app';
 
   if (!cfg.configured) {
     writeStoredSession(storage, createDevelopmentSession(nowMs));
@@ -248,8 +251,9 @@ export async function completeSignIn(
     });
     writeStoredSession(storage, session);
     storage.removeItem(PKCE_STORAGE_KEY);
-    const next = storage.getItem(NEXT_PATH_KEY) ?? '/app';
+    const storedNext = storage.getItem(NEXT_PATH_KEY);
     storage.removeItem(NEXT_PATH_KEY);
+    const next = isSafeInternalPath(storedNext) ? storedNext : '/app';
     return { ok: true, user: session.user, next, developmentMode: false };
   } catch (err) {
     return {
@@ -275,7 +279,8 @@ export async function restoreSession(
 
   if (session.user.developmentMode) {
     if (isSessionExpired(session, nowMs)) {
-      const fresh = createDevelopmentSession(nowMs);
+      const account = DEMO_ACCOUNTS.find((a) => a.id === session.user.id) ?? DEMO_ACCOUNTS[0];
+      const fresh = createDevelopmentSession(nowMs, account);
       writeStoredSession(storage, fresh);
       return fresh;
     }
@@ -310,7 +315,14 @@ export async function restoreSession(
   return null;
 }
 
-/** Clear the local session and end the Cognito hosted session (if configured). */
+/**
+ * Clear the local session and end the Cognito hosted session (if configured).
+ *
+ * The `logout_uri` must exactly match one of the app client's configured logout
+ * URLs. `window.location.origin` (scheme + host + port) never carries a
+ * trailing slash, so it matches an app client configured with e.g.
+ * `http://localhost:3000` exactly.
+ */
 export function signOut(
   cfg: AuthConfig,
   input: { storage: StorageLike; origin: string }
@@ -320,7 +332,8 @@ export function signOut(
   if (!cfg.configured) {
     return { dev: true };
   }
-  return { dev: false, url: buildLogoutUrl(cfg, `${origin}/`) };
+  const logoutUri = origin.replace(/\/+$/, '');
+  return { dev: false, url: buildLogoutUrl(cfg, logoutUri) };
 }
 
 /** Convenience: read the stored return path (used by the callback entry screen). */

@@ -1,5 +1,6 @@
 import {
   AuthConfig,
+  AuthMode,
   AuthSession,
   AuthStatus,
   AuthUser,
@@ -237,6 +238,27 @@ export function resolveProtectedAccess(status: AuthStatus, hasUser: boolean): 'l
   if (status === 'loading') return 'loading';
   if (status === 'authenticated' && hasUser) return 'allow';
   return 'redirect';
+}
+
+/**
+ * Derive the single source-of-truth auth mode from provider state.
+ * Signed out → null. Authenticated sessions split into 'cognito' vs 'demo'.
+ */
+export function deriveAuthMode(status: AuthStatus, user: AuthUser | null): AuthMode | null {
+  if (status !== 'authenticated' || !user) return null;
+  return user.developmentMode ? 'demo' : 'cognito';
+}
+
+/** Which case data source the app should use for the active auth mode. */
+export function resolveCaseSource(authMode: AuthMode | null): 'demo' | 'backend' | 'none' {
+  if (authMode === 'demo') return 'demo';
+  if (authMode === 'cognito') return 'backend';
+  return 'none';
+}
+
+/** Only safe single-segment internal paths may be used as redirect targets. */
+export function isSafeInternalPath(path: string | undefined | null): path is string {
+  return Boolean(path) && path!.length > 1 && path!.startsWith('/') && !path!.startsWith('//') && !(/[\r\n]/.test(path!));
 }
 
 /** Build the clearly-labeled development-mode session used when Cognito is not configured. */

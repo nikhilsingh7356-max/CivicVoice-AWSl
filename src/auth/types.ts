@@ -16,6 +16,13 @@ export interface AuthUser {
 
 export type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
 
+/**
+ * Which authentication mode produced the active session:
+ * - 'cognito' — real Amazon Cognito session.
+ * - 'demo' — clearly-labeled local development simulation.
+ */
+export type AuthMode = 'cognito' | 'demo';
+
 export interface AuthSession {
   user: AuthUser;
   accessToken: string;

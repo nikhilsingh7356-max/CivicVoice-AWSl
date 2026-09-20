@@ -1,11 +1,13 @@
 import { createContext, useContext } from 'react';
-import { AuthStatus, AuthUser } from './types';
+import { AuthMode, AuthStatus, AuthUser } from './types';
 import { DemoCredentialCheck } from './logic';
 
 export interface AuthContextValue {
   status: AuthStatus;
   user: AuthUser | null;
   developmentMode: boolean;
+  /** Single source of truth: 'cognito' | 'demo' for active sessions, null when signed out. */
+  authMode: AuthMode | null;
   initializing: boolean;
   processingCallback: boolean;
   callbackError: string | null;

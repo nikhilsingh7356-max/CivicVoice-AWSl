@@ -38,13 +38,18 @@ export function initHomeHashScroll(): void {
   }
 }
 
-/** Clear amber banner shown whenever a simulated (non-Cognito) session is active. */
+/**
+ * Clear amber banner shown whenever a simulated (non-Cognito) session is active.
+ * Notes the session is a local simulation — it deliberately does not claim
+ * Cognito is unconfigured, since a demo session can be active alongside a
+ * configured Cognito pool.
+ */
 export const DevModeBanner: React.FC = () => {
   const { developmentMode } = useAuth();
   if (!developmentMode) return null;
   return (
     <div className="border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-center text-[11.5px] font-medium text-amber-800">
-      Development session — Amazon Cognito isn't configured. Sign-in is simulated locally.
+      Development session — sign-in is simulated locally and is not an authenticated AWS account.
     </div>
   );
 };

@@ -10,7 +10,7 @@ import {
   writeDemoSession,
 } from './auth';
 import { AuthContext, AuthContextValue } from './useAuth';
-import { validateDemoCredentials } from './logic';
+import { deriveAuthMode, isSafeInternalPath, validateDemoCredentials } from './logic';
 import { useToast } from '../components/ui/Toast';
 
 function isCallbackRoute(pathname: string): boolean {
@@ -19,7 +19,7 @@ function isCallbackRoute(pathname: string): boolean {
 
 function buildEntryUrl(mode: 'login' | 'signup', next?: string): string {
   const path = mode === 'signup' ? '/signup' : '/login';
-  return next && next.startsWith('/') ? `${path}?next=${encodeURIComponent(next)}` : path;
+  return isSafeInternalPath(next) ? `${path}?next=${encodeURIComponent(next)}` : path;
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -81,6 +81,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const value = useMemo<AuthContextValue>(() => {
     const user = session?.user ?? null;
+    const authMode = deriveAuthMode(status, user);
 
     const login = (next?: string) => {
       if (!authConfig.configured) {
@@ -144,6 +145,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       status,
       user,
       developmentMode: user?.developmentMode ?? false,
+      authMode,
       initializing: status === 'loading',
       processingCallback,
       callbackError,

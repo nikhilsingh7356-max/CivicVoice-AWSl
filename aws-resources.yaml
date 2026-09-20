@@ -468,7 +468,7 @@ Resources:
         - email
       AutoVerifiedAttributes:
         - email
-      MfaConfiguration: OFF
+      MfaConfiguration: 'OFF'
 
       Schema:
         - Name: email

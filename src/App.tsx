@@ -3,6 +3,8 @@ import { CivicCase, CaseStatus } from './types';
 import { INITIAL_DEMO_CASES } from './demoData';
 import { AppShell, ApiStatus } from './components/ui/AppShell';
 import { ProtectedRoute } from './auth/ProtectedRoute';
+import { useAuth } from './auth/useAuth';
+import { resolveCaseSource } from './auth/logic';
 import HomePage from './pages/HomePage';
 import { AuthEntryPage } from './pages/AuthEntryPage';
 import { AuthCallbackPage } from './pages/AuthCallbackPage';
@@ -29,6 +31,7 @@ function toAppPath(path: string): string {
 }
 
 export function App() {
+  const { authMode } = useAuth();
   const [currentPath, setCurrentPath] = useState<string>(() => {
     return window.location.pathname || '/';
   });
@@ -71,9 +74,25 @@ export function App() {
     }
   }, [notify]);
 
+  /**
+   * Choose the case data source from the active auth mode:
+   * - demo sessions → deterministic local sample data, never touch the backend.
+   * - cognito sessions → the live DynamoDB-backed API with honest offline fallback.
+   * - signed out → no fetch (public pages have no dashboard data to show).
+   */
   useEffect(() => {
-    fetchCases();
-  }, [fetchCases]);
+    switch (resolveCaseSource(authMode)) {
+      case 'demo':
+        setCases(INITIAL_DEMO_CASES);
+        setApiStatus('offline-demo');
+        break;
+      case 'backend':
+        void fetchCases();
+        break;
+      case 'none':
+        break;
+    }
+  }, [authMode, fetchCases]);
 
   const handleCaseCreated = useCallback((newCase: CivicCase) => {
     setCases((prev) => [newCase, ...prev.filter((c) => c.case_id !== newCase.case_id)]);
