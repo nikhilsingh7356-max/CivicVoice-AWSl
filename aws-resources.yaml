@@ -4,18 +4,17 @@ Transform: AWS::Serverless-2016-10-31
 Description: CivicVoice AI - AWS Ship It MVP
 
 Parameters:
+
   BedrockModelId:
     Type: String
     Default: global.anthropic.claude-sonnet-4-5-20250929-v1:0
 
-  # Optional officer notification email.
-  # When empty, no SNS email subscription is created.
   AlertEmail:
     Type: String
     Default: ''
 
 Conditions:
-  # Create the SNS email subscription only when an email is supplied.
+
   CreateAlertSubscription: !Not
     - !Equals
       - !Ref AlertEmail
@@ -24,11 +23,12 @@ Conditions:
 Resources:
 
   # ============================================================
-  # DYNAMODB - MAIN CASES
+  # DYNAMODB - MAIN CIVIC CASES
   # ============================================================
 
   CasesTable:
     Type: AWS::DynamoDB::Table
+
     Properties:
       TableName: CivicVoiceCases
       BillingMode: PAY_PER_REQUEST
@@ -46,11 +46,12 @@ Resources:
 
 
   # ============================================================
-  # DYNAMODB - APPEND-ONLY AUDIT HISTORY
+  # DYNAMODB - APPEND-ONLY CASE HISTORY
   # ============================================================
 
   CaseHistoryTable:
     Type: AWS::DynamoDB::Table
+
     Properties:
       TableName: CivicVoiceCaseHistory
       BillingMode: PAY_PER_REQUEST
@@ -74,11 +75,12 @@ Resources:
 
 
   # ============================================================
-  # S3 - PRIVATE CIVIC EVIDENCE
+  # S3 - PRIVATE EVIDENCE STORAGE
   # ============================================================
 
   EvidenceBucket:
     Type: AWS::S3::Bucket
+
     Properties:
 
       BucketEncryption:
@@ -97,11 +99,12 @@ Resources:
 
 
   # ============================================================
-  # EVENTBRIDGE - CIVICVOICE EVENT BUS
+  # EVENTBRIDGE - CIVICVOICE CUSTOM EVENT BUS
   # ============================================================
 
   CivicVoiceEventBus:
     Type: AWS::Events::EventBus
+
     Properties:
       Name: CivicVoiceEventBus
 
@@ -112,32 +115,30 @@ Resources:
 
   CivicVoiceSnsTopic:
     Type: AWS::SNS::Topic
+
     Properties:
       TopicName: CivicVoiceCriticalAlerts
 
 
   # ============================================================
   # SNS TOPIC POLICY
-  #
-  # IMPORTANT:
-  # This is a separate AWS::SNS::TopicPolicy resource.
-  # Keeping the policy separate avoids the CloudFormation
-  # circular dependency between SNS and EventBridge.
   # ============================================================
 
   CivicVoiceSnsTopicPolicy:
     Type: AWS::SNS::TopicPolicy
+
     Properties:
 
       Topics:
         - !Ref CivicVoiceSnsTopic
 
       PolicyDocument:
+
         Version: '2012-10-17'
 
         Statement:
-          - Sid: EventBridgePublishCriticalAlerts
 
+          - Sid: EventBridgePublishCriticalAlerts
             Effect: Allow
 
             Principal:
@@ -160,6 +161,7 @@ Resources:
 
   CivicVoiceAlertSubscription:
     Type: AWS::SNS::Subscription
+
     Condition: CreateAlertSubscription
 
     Properties:
@@ -170,8 +172,7 @@ Resources:
 
   # ============================================================
   # EVENTBRIDGE RULE
-  #
-  # HIGH + CRITICAL cases generate officer alerts.
+  # HIGH AND CRITICAL CASES GENERATE OFFICER ALERTS
   # ============================================================
 
   CivicVoiceCriticalCaseRule:
@@ -181,6 +182,7 @@ Resources:
       - CivicVoiceSnsTopicPolicy
 
     Properties:
+
       Name: CivicVoiceCriticalCaseRule
 
       EventBusName: !Ref CivicVoiceEventBus
@@ -196,17 +198,30 @@ Resources:
           - CivicCaseCreated
 
         detail:
+
           priority:
             - CRITICAL
             - HIGH
 
       Targets:
+
         - Arn: !Ref CivicVoiceSnsTopic
           Id: CivicVoiceCriticalSnsTarget
 
 
   # ============================================================
-  # API LAMBDA
+  # API GATEWAY
+  # ============================================================
+
+  CivicVoiceApi:
+    Type: AWS::Serverless::Api
+
+    Properties:
+      StageName: Prod
+
+
+  # ============================================================
+  # MAIN CIVICVOICE LAMBDA
   # ============================================================
 
   ApiFunction:
@@ -216,9 +231,15 @@ Resources:
       BuildMethod: esbuild
 
       BuildProperties:
+        EntryPoints:
+          - lambda.ts
+
         Minify: true
+
         Target: es2022
+
         Sourcemap: true
+
         Format: cjs
 
         External:
@@ -237,12 +258,12 @@ Resources:
 
       Timeout: 60
 
-
       # --------------------------------------------------------
       # ENVIRONMENT VARIABLES
       # --------------------------------------------------------
 
       Environment:
+
         Variables:
 
           CASES_TABLE: !Ref CasesTable
@@ -262,16 +283,14 @@ Resources:
 
       Policies:
 
-        # Main CivicVoice cases table.
+        # Main case table
         - DynamoDBCrudPolicy:
             TableName: !Ref CasesTable
 
 
-        # Append-only audit history.
-        #
-        # Only PutItem and Query are granted.
-        # No UpdateItem or DeleteItem permission.
+        # Append-only audit history
         - Statement:
+
             - Effect: Allow
 
               Action:
@@ -281,13 +300,14 @@ Resources:
               Resource: !GetAtt CaseHistoryTable.Arn
 
 
-        # Private evidence bucket.
+        # S3 evidence bucket
         - S3CrudPolicy:
             BucketName: !Ref EvidenceBucket
 
 
-        # Amazon Bedrock.
+        # Amazon Bedrock
         - Statement:
+
             - Effect: Allow
 
               Action:
@@ -297,8 +317,9 @@ Resources:
               Resource: '*'
 
 
-        # Amazon Transcribe.
+        # Amazon Transcribe
         - Statement:
+
             - Effect: Allow
 
               Action:
@@ -308,11 +329,9 @@ Resources:
               Resource: '*'
 
 
-        # EventBridge.
-        #
-        # Lambda can publish CivicCaseCreated events
-        # only to the CivicVoice event bus.
+        # EventBridge
         - Statement:
+
             - Effect: Allow
 
               Action:
@@ -321,11 +340,9 @@ Resources:
               Resource: !GetAtt CivicVoiceEventBus.Arn
 
 
-        # CloudWatch custom metrics.
-        #
-        # PutMetricData does not support resource-level
-        # permissions, therefore Resource: '*'.
+        # CloudWatch custom metrics
         - Statement:
+
             - Effect: Allow
 
               Action:
@@ -334,18 +351,23 @@ Resources:
               Resource: '*'
 
 
-    # ==========================================================
-    # API GATEWAY
-    # ==========================================================
+      # ========================================================
+      # API GATEWAY EVENT
+      # ========================================================
 
-    Events:
+      Events:
 
-      Api:
-        Type: Api
+        Api:
 
-        Properties:
-          Path: /{proxy+}
-          Method: ANY
+          Type: Api
+
+          Properties:
+
+            RestApiId: !Ref CivicVoiceApi
+
+            Path: /{proxy+}
+
+            Method: ANY
 
 
   # ============================================================
@@ -368,6 +390,7 @@ Resources:
       MetricName: Errors
 
       Dimensions:
+
         - Name: FunctionName
           Value: !Ref ApiFunction
 
@@ -424,22 +447,24 @@ Resources:
 Outputs:
 
   # ------------------------------------------------------------
-  # API URL
+  # API GATEWAY URL
   # ------------------------------------------------------------
 
   ApiUrl:
+
     Description: CivicVoice API Gateway URL
 
     Value: !Sub
-      - https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/
-      - {}
+      - https://${ApiId}.execute-api.${AWS::Region}.amazonaws.com/Prod/
+      - ApiId: !Ref CivicVoiceApi
 
 
   # ------------------------------------------------------------
-  # S3
+  # S3 EVIDENCE BUCKET
   # ------------------------------------------------------------
 
   EvidenceBucket:
+
     Description: >
       S3 bucket used for CivicVoice evidence
 
@@ -451,6 +476,7 @@ Outputs:
   # ------------------------------------------------------------
 
   CasesTable:
+
     Description: >
       DynamoDB table containing CivicVoice cases
 
@@ -462,6 +488,7 @@ Outputs:
   # ------------------------------------------------------------
 
   CaseHistoryTable:
+
     Description: >
       Append-only DynamoDB table containing
       the CivicVoice case audit trail
@@ -474,13 +501,19 @@ Outputs:
   # ------------------------------------------------------------
 
   CivicVoiceEventBus:
+
     Description: >
       CivicVoice custom EventBridge bus
 
     Value: !Ref CivicVoiceEventBus
 
 
+  # ------------------------------------------------------------
+  # EVENTBRIDGE BUS ARN
+  # ------------------------------------------------------------
+
   CivicVoiceEventBusArn:
+
     Description: >
       ARN of the CivicVoice EventBridge bus
 
@@ -488,10 +521,11 @@ Outputs:
 
 
   # ------------------------------------------------------------
-  # SNS
+  # SNS ALERT TOPIC
   # ------------------------------------------------------------
 
   CivicVoiceSnsTopic:
+
     Description: >
       SNS topic for critical CivicVoice officer alerts
 

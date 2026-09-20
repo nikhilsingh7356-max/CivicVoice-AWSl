@@ -73,6 +73,65 @@ function safeJson(text: string) {
 function makeCaseId() {
   return `CV-${new Date().getFullYear()}-${randomUUID().slice(0, 8).toUpperCase()}`;
 }
+const ALLOWED_CATEGORIES = new Set([
+  'ROADS',
+  'WASTE',
+  'WATER',
+  'ELECTRICITY',
+  'SANITATION',
+  'STREETLIGHT',
+  'PUBLIC_SAFETY',
+  'TRAFFIC',
+  'DRAINAGE',
+  'PUBLIC_PROPERTY',
+  'ENVIRONMENT',
+  'OTHER',
+]);
+
+function normalizeCategory(category: unknown): string {
+  const normalized = String(category || 'OTHER')
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+
+  return ALLOWED_CATEGORIES.has(normalized)
+    ? normalized
+    : 'OTHER';
+}
+
+function applyCategorySafeguard(
+  category: string,
+  complaint: string
+): string {
+  const text = String(complaint || '').toLowerCase().trim();
+
+  if (
+    /\bstreet\s*lights?\b/.test(text) ||
+    /\bstreet\s*lamps?\b/.test(text) ||
+    /\bstreetlight\b/.test(text) ||
+    /\bstreet\s*lighting\b/.test(text) ||
+    /\blights?\s+(?:are|is)\s+not\s+working\b/.test(text) ||
+    /\blights?\s+(?:are|is)\s+broken\b/.test(text) ||
+    /\blights?\s+(?:are|is)\s+out\b/.test(text) ||
+    /\bno\s+street\s+lights?\b/.test(text)
+  ) {
+    return 'STREETLIGHT';
+  }
+
+  if (
+    /\bpotholes?\b|\bdamaged\s+road\b|\bbroken\s+road\b/.test(text)
+  ) {
+    return 'ROADS';
+  }
+
+  if (
+    /\bgarbage\b|\btrash\b|\bwaste\s+accumulation\b/.test(text)
+  ) {
+    return 'WASTE';
+  }
+
+  return normalizeCategory(category);
+}
 
 async function listCases() {
   const out = await ddb.send(new ScanCommand({ TableName: CASES_TABLE, Limit: 100 }));
@@ -98,7 +157,48 @@ async function updateCase(id: string, updates: Partial<CivicCase>) {
 }
 
 async function analyzeWithBedrock(input: { complaint: string; image?: string; location?: string; language?: string; existingCases: CivicCase[] }) {
-  const system = `You are CivicVoice AI, a civic infrastructure triage assistant. Convert citizen reports into structured operational recommendations. AI output is untrusted and must never invent GPS coordinates or claim that a report is officially verified. Clearly distinguish observed visual evidence from assumptions. Priority and severity are recommendations for human officials.\n\nAllowed categories: ROADS, WASTE, WATER, ELECTRICITY, SANITATION, STREETLIGHT, PUBLIC_SAFETY, TRAFFIC, DRAINAGE, PUBLIC_PROPERTY, ENVIRONMENT, OTHER.\nAllowed priorities: LOW, MEDIUM, HIGH, CRITICAL.`;
+  const system = `You are CivicVoice AI, a civic infrastructure triage assistant.
+
+Convert citizen reports into structured operational recommendations.
+
+AI output is untrusted and must never:
+- invent GPS coordinates
+- claim that a report is officially verified
+- invent evidence that is not present
+- override human officials
+
+Clearly distinguish observed visual evidence from assumptions.
+
+Priority and severity are recommendations for human officials.
+
+Allowed categories:
+ROADS,
+WASTE,
+WATER,
+ELECTRICITY,
+SANITATION,
+STREETLIGHT,
+PUBLIC_SAFETY,
+TRAFFIC,
+DRAINAGE,
+PUBLIC_PROPERTY,
+ENVIRONMENT,
+OTHER.
+
+IMPORTANT CATEGORY RULES:
+- If the complaint mentions street lights, street lamps, street lighting, broken street lights, lights not working, lights being out, or no street lights, classify it as STREETLIGHT.
+- A clear street-light failure must NOT be classified as OTHER.
+- If a complaint is about potholes, damaged roads, or broken roads, use ROADS.
+- If a complaint is about garbage, trash, or waste accumulation, use WASTE.
+- Use OTHER only when none of the allowed categories reasonably matches.
+
+Allowed priorities:
+LOW,
+MEDIUM,
+HIGH,
+CRITICAL.
+
+Return only information supported by the citizen complaint, supplied location, and image evidence.`;
   const casesContext = input.existingCases.slice(0, 8).map(c => `${c.case_id}: ${c.category}; ${c.location}; ${c.title}`).join('\n');
   const prompt = `Return ONLY valid JSON.\nCitizen complaint: ${JSON.stringify(input.complaint || '')}\nDevice location text: ${JSON.stringify(input.location || 'Unavailable')}\nLanguage hint: ${JSON.stringify(input.language || 'Auto Detect')}\nExisting cases for possible similarity:\n${casesContext || 'None'}\n\nSchema:\n{\n"title":"string","category":"allowed category","subcategory":"string","citizen_summary":"string","authority_summary":"string","detailed_description":"string","department":"string","priority":"LOW|MEDIUM|HIGH|CRITICAL","severity_score":5.0,"language":"string","location":"use supplied location only","citizen_impact":"string","recommended_action":["string"],"evidence_observations":{"detected_issue":"string","visible_evidence":"string","potential_public_impact":"string","evidence_confidence":"High|Medium|Low"},"safety_concern":"string","estimated_urgency":"string","confidence":"string","confidence_score":0,"why_department":"string","why_case_matters":"string","ai_explanations":{"why_category":"string","why_department":"string","why_priority":"string","why_severity":"string","why_action":"string"},"potentially_related_cases":[]}`;
   const content: any[] = [{ text: prompt }];
@@ -211,8 +311,24 @@ app.post(['/api/analyze', '/analyze'], async (req, res) => {
       return res.status(400).json({ success: false, error: 'Device location is unavailable. Please enable location or enter the location manually.' });
     }
     const existingCases = await listCases();
-    const analysis = await analyzeWithBedrock({ complaint, image, location, language, existingCases });
-    const reg = resolveAuthorityByTaxonomy(analysis.category, location);
+
+const analysis = await analyzeWithBedrock({
+  complaint,
+  image,
+  location,
+  language,
+  existingCases
+});
+
+analysis.category = applyCategorySafeguard(
+  normalizeCategory(analysis.category),
+  complaint
+);
+
+const reg = resolveAuthorityByTaxonomy(
+  analysis.category,
+  location
+);
     analysis.responsible_authority = analysis.responsible_authority || reg.authority;
     analysis.department = analysis.department || reg.department;
     analysis.jurisdiction = analysis.jurisdiction || reg.jurisdiction;
